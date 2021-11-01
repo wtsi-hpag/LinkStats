@@ -18,6 +18,7 @@ def main():
             "matplotlib>=3.4.2",
             "pysam>=0.16.0.1",
             "tqdm>=4.61.1",
+            "networkx>=2.6.3",
         ),
         description="Collect stats from aligned linked-reads",
         entry_points="""

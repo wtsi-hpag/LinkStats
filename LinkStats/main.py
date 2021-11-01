@@ -6,13 +6,14 @@ import sys
 import warnings
 from concurrent.futures import ThreadPoolExecutor as TPE
 from enum import Enum, auto
-from itertools import chain
+from itertools import chain, groupby, tee
 from pathlib import Path
 from subprocess import STDOUT, CalledProcessError, Popen, check_output
 
 import click as ck
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 import pandas as pd
 import pysam
@@ -73,11 +74,13 @@ class CallBack:
 
 
 class AlignmentFile(CallBack):
-    def __init__(self, file, ref, name=None):
+    def __init__(self, file, ref, use_mi_tags, cluster_threshold, name=None):
         super().__init__(self.Types.AF)
 
         self.file = file
         self.ref = ref
+        self.use_mi_tags = use_mi_tags
+        self.cluster_threshold = cluster_threshold
         self.name = name
 
     @property
@@ -136,6 +139,20 @@ def ConcatDF(it):
 
 def GetAllStats(alignment_files, molecular_data, min_reads, threads):
     def GetAllStatsFromAFs():
+        class Alignment:
+            def __init__(self, alignment):
+                self.query_name = alignment.query_name
+                self.reference_name = alignment.reference_name
+
+                self.reference_start = alignment.reference_start
+                self.reference_end = alignment.reference_end
+
+                self.query_length = alignment.query_length
+                self.mapping_quality = alignment.mapping_quality
+
+                self.mi = alignment.get_tag("MI") if alignment.has_tag("MI") else None
+                self.bx = alignment.get_tag("BX") if alignment.has_tag("BX") else None
+
         class Molecule:
             def __init__(self, alignment):
                 self.min = np.inf
@@ -145,8 +162,8 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 self.total_read_len = 0
                 self.total_mapping_quality = 0
 
-                self.mi = alignment.get_tag("MI")
-                self.bx = alignment.get_tag("BX")
+                self.mi = alignment.mi
+                self.bx = alignment.bx
                 self.ref = alignment.reference_name
 
             def update(self, alignment):
@@ -178,6 +195,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 self.total_unm = 0
                 self.total_nomi = 0
                 self.total_nobx = 0
+                self.total_zeromq = 0
 
         class SamReader:
             threads = 4
@@ -254,10 +272,10 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     basic_stats.setdefault(
                         get_name(alignment), BasicStats()
                     ).total_read_length += alignment.query_length
-
                     basic_stats.setdefault(
                         get_name(alignment), BasicStats()
                     ).total_alignments += 1
+
                     if alignment.is_unmapped:
                         basic_stats.setdefault(
                             get_name(alignment), BasicStats()
@@ -284,16 +302,66 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                             basic_stats.setdefault(
                                 get_name(alignment), BasicStats()
                             ).total_nobx += 1
+                        if alignment.mapping_quality == 0:
+                            basic_stats.setdefault(
+                                get_name(alignment), BasicStats()
+                            ).total_zeromq += 1
 
-                        if alignment.has_tag("MI") and alignment.has_tag("BX"):
+                        if (
+                            alignment.mapping_quality > 0
+                            and alignment.has_tag("BX")
+                            and (
+                                alignment.has_tag("MI")
+                                if alignment_file.use_mi_tags
+                                else True
+                            )
+                        ):
                             molecule_data.setdefault(
                                 get_name(alignment), {}
                             ).setdefault(alignment.reference_name, {}).setdefault(
-                                str(alignment.get_tag("MI")) + alignment.get_tag("BX"),
-                                Molecule(alignment),
-                            ).update(
-                                alignment
+                                alignment.get_tag("BX")
+                                + (
+                                    ("_" + str(alignment.get_tag("MI")))
+                                    if alignment_file.use_mi_tags
+                                    else ""
+                                ),
+                                [],
+                            ).append(
+                                Alignment(alignment)
                             )
+
+            def ClusterAlignments(alignments):
+                def pairwise(it):
+                    a, b = tee(it)
+                    next(b, None)
+                    return zip(a, b)
+
+                g = nx.Graph()
+                g.add_nodes_from(alignments)
+                # g.add_edges_from(
+                #    (g[0], h)
+                #    for _, git in groupby(
+                #        sorted(alignments, key=lambda a: a.query_name),
+                #        lambda a: a.query_name,
+                #    )
+                #    for g in (tuple(git),)
+                #    for h in g[1:]
+                # )
+                g.add_edges_from(
+                    (a, b)
+                    for a, b in pairwise(
+                        sorted(alignments, key=lambda a: a.reference_start)
+                    )
+                    if (b.reference_start - a.reference_end)
+                    < alignment_file.cluster_threshold
+                )
+                for cc in nx.connected_components(g):
+                    cc = iter(cc)
+                    c = next(cc)
+                    m = Molecule(c)
+                    for c in chain((c,), cc):
+                        m.update(c)
+                    yield m
 
             molecule_data = pd.DataFrame(
                 (
@@ -309,7 +377,8 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     )
                     for name, a in molecule_data.items()
                     for b in a.values()
-                    for molecule in b.values()
+                    for c in b.values()
+                    for molecule in ClusterAlignments(c)
                 ),
                 columns=(
                     "Sample Name",
@@ -344,6 +413,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                             (bs.total_alignments - bs.total_unm) / bs.total_alignments,
                             bs.total_nobx / bs.total_alignments,
                             bs.total_nomi / bs.total_alignments,
+                            bs.total_zeromq / bs.total_alignments,
                         )
                         + n_stats(data["No. Reads"], (50, 90))
                         + ((data["No. Reads"] ** 2).sum() / data["No. Reads"].sum(),)
@@ -400,6 +470,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     "Mapped",
                     "No BX",
                     "No MI",
+                    "Zero MapQ",
                     "N50 Reads Per Molecule",
                     "N90 Reads Per Molecule",
                     "auN Reads Per Molecule",
@@ -587,6 +658,14 @@ def cli(threads, min_reads):
 @ck.argument("path", type=ck.Path(readable=True, path_type=Path))
 @ck.option("-r", "--reference", type=ck.Path(exists=True), help="FASTA reference")
 @ck.option("-n", "--name", type=str, help="Sample name")
+@ck.option("--mi/--no-mi", default=False, help="Group by MI tags as well as BX")
+@ck.option(
+    "-t",
+    "--threshold",
+    type=int,
+    default=50000,
+    help="Maximum alignment separation per molecule",
+)
 @documenter(
     """
 Read SAM/BAM/CRAM data from PATH.
@@ -604,8 +683,10 @@ Option -n sets a same-name for all data, taking preference over SM tags.
 Option -r sets a FASTA reference for CRAM decoding.
 """
 )
-def sam_data(path, reference=None, name=None):
-    return AlignmentFile(file=path, ref=reference, name=name)
+def sam_data(path, mi, threshold, reference=None, name=None):
+    return AlignmentFile(
+        file=path, ref=reference, name=name, use_mi_tags=mi, cluster_threshold=threshold
+    )
 
 
 @cli.command()
@@ -699,7 +780,7 @@ def run(callbacks, threads, min_reads):
             )
         csv = csv[-1]
 
-    if not csv.any_set:
+    if csv and not csv.any_set:
         raise ck.ClickException("CSV prefix specified, but no data set to be saved")
 
     plot = tuple(pp.prefix for pp in callbacks if pp.is_PP)
