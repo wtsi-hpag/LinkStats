@@ -400,107 +400,116 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     for x in (np.where(d >= (d[-1] * n / 100))[0].min(),)
                 )
 
-            return molecule_data, pd.DataFrame(
-                (
+            return (
+                molecule_data,
+                pd.DataFrame(
                     (
                         (
-                            name,
-                            genome_length,
-                            bs.total_alignments,
-                            bs.total_dup / bs.total_alignments,
-                            bs.total_qcf / bs.total_alignments,
-                            bs.total_unm / bs.total_alignments,
-                            (bs.total_alignments - bs.total_unm) / bs.total_alignments,
-                            bs.total_nobx / bs.total_alignments,
-                            bs.total_nomi / bs.total_alignments,
-                            bs.total_zeromq / bs.total_alignments,
-                        )
-                        + n_stats(data["No. Reads"], (50, 90))
-                        + ((data["No. Reads"] ** 2).sum() / data["No. Reads"].sum(),)
-                        + tuple(
-                            chain(
-                                *(
+                            (
+                                name,
+                                genome_length,
+                                bs.total_alignments,
+                                bs.total_dup / bs.total_alignments,
+                                bs.total_qcf / bs.total_alignments,
+                                bs.total_unm / bs.total_alignments,
+                                (bs.total_alignments - bs.total_unm)
+                                / bs.total_alignments,
+                                bs.total_nobx / bs.total_alignments,
+                                bs.total_nomi / bs.total_alignments,
+                                bs.total_zeromq / bs.total_alignments,
+                            )
+                            + n_stats(data["No. Reads"], (50, 90))
+                            + (
+                                (data["No. Reads"] ** 2).sum()
+                                / data["No. Reads"].sum(),
+                            )
+                            + tuple(
+                                chain.from_iterable(
                                     (
                                         (
-                                            q.shape[0],
-                                            q.mean(),
-                                            d.mean(),
+                                            (
+                                                q.shape[0],
+                                                q.mean(),
+                                                d.mean(),
+                                            )
+                                            + n_stats(
+                                                d,
+                                                (50, 90),
+                                            )
+                                            + ((d ** 2).sum() / d.sum(),)
                                         )
-                                        + n_stats(
-                                            d,
-                                            (50, 90),
-                                        )
-                                        + ((d ** 2).sum() / d.sum(),)
+                                        for m in min_reads
+                                        for s in (data[data["No. Reads"] >= m],)
+                                        for d in (s["Molecule Length"],)
+                                        for q in (s["Mean MapQ"],)
                                     )
-                                    for m in min_reads
-                                    for s in (data[data["No. Reads"] >= m],)
-                                    for d in (s["Molecule Length"],)
-                                    for q in (s["Mean MapQ"],)
                                 )
                             )
-                        )
-                        + (
-                            np.median(bs.insert_sizes),
-                            bs.total_read_length / genome_length,
-                        )
-                        + tuple(
-                            chain(
-                                *(
+                            + (
+                                np.median(bs.insert_sizes),
+                                bs.total_read_length / genome_length,
+                            )
+                            + tuple(
+                                chain.from_iterable(
                                     (
-                                        s["Mean Read Depth"].mean(),
-                                        s["Molecule Length"].sum() / genome_length,
+                                        (
+                                            s["Mean Read Depth"].mean(),
+                                            s["Molecule Length"].sum() / genome_length,
+                                        )
+                                        for m in min_reads
+                                        for s in (data[data["No. Reads"] >= m],)
                                     )
-                                    for m in min_reads
-                                    for s in (data[data["No. Reads"] >= m],)
                                 )
                             )
                         )
+                        for name in molecule_data["Sample Name"].unique()
+                        for bs in (basic_stats[name],)
+                        for data in (
+                            molecule_data[molecule_data["Sample Name"] == name],
+                        )
+                    ),
+                    columns=(
+                        "Sample Name",
+                        "Genome Length",
+                        "Total Alignments",
+                        "Duplicates",
+                        "QCFail",
+                        "Unmapped",
+                        "Mapped",
+                        "No BX",
+                        "No MI",
+                        "Zero MapQ",
+                        "N50 Reads Per Molecule",
+                        "N90 Reads Per Molecule",
+                        "auN Reads Per Molecule",
                     )
-                    for name in molecule_data["Sample Name"].unique()
-                    for bs in (basic_stats[name],)
-                    for data in (molecule_data[molecule_data["Sample Name"] == name],)
-                ),
-                columns=(
-                    "Sample Name",
-                    "Genome Length",
-                    "Total Alignments",
-                    "Duplicates",
-                    "QCFail",
-                    "Unmapped",
-                    "Mapped",
-                    "No BX",
-                    "No MI",
-                    "Zero MapQ",
-                    "N50 Reads Per Molecule",
-                    "N90 Reads Per Molecule",
-                    "auN Reads Per Molecule",
-                )
-                + tuple(
-                    chain(
-                        *(
+                    + tuple(
+                        chain.from_iterable(
                             (
-                                f"No. Molecules (No. Reads >= {m})",
-                                f"Mean Read MapQ Per Molecule (No. Reads >= {m})",
-                                f"Mean Molecule Length (No. Reads >= {m})",
-                                f"N50 Molecule Length (No. Reads >= {m})",
-                                f"N90 Molecule Length (No. Reads >= {m})",
-                                f"auN Molecule Length (No. Reads >= {m})",
+                                (
+                                    f"No. Molecules (No. Reads >= {m})",
+                                    f"Mean Read MapQ Per Molecule (No. Reads >= {m})",
+                                    f"Mean Molecule Length (No. Reads >= {m})",
+                                    f"N50 Molecule Length (No. Reads >= {m})",
+                                    f"N90 Molecule Length (No. Reads >= {m})",
+                                    f"auN Molecule Length (No. Reads >= {m})",
+                                )
+                                for m in min_reads
                             )
-                            for m in min_reads
                         )
                     )
-                )
-                + ("Median Insert Size", "Mean Short Read Depth")
-                + tuple(
-                    chain(
-                        *(
+                    + ("Median Insert Size", "Mean Short Read Depth")
+                    + tuple(
+                        chain.from_iterable(
                             (
-                                f"Mean Short Read Depth Per Molecule (No. Reads >= {m})",
-                                f"Molecule Read Depth (No. Reads >= {m})",
+                                (
+                                    f"Mean Short Read Depth Per Molecule (No. Reads >= {m})",
+                                    f"Molecule Read Depth (No. Reads >= {m})",
+                                )
+                                for m in min_reads
                             )
-                            for m in min_reads
                         )
-                    )
+                    ),
                 ),
             )
 
@@ -561,10 +570,13 @@ def GetAllMolLenHists(df, hist_data, min_reads, threads):
             density=True,
         )
 
+        select = ~np.isnan(prob)
+
         return pd.DataFrame(
             {
-                "Probability Density": prob,
-                "Molecule Length": (length[:-1] + length[1:]) / 2,
+                "PDF": prob[select],
+                "CDF": np.cumsum(prob[select]) / prob[select].sum(),
+                "Molecule Length": ((length[:-1] + length[1:]) / 2)[select],
                 "Sample Name": sample_name,
                 "Min No. Reads": str(min_reads),
             }
@@ -852,11 +864,13 @@ def run(callbacks, threads, min_reads):
         plot.parent.mkdir(parents=True, exist_ok=True)
         get_path = lambda f: base_get_path(f, plot)
 
-        def save_plots(col, hue, n):
-            name = get_path(f"molecular_length_histograms_{n}.png")
+        def save_plots(col, hue, n, typ):
+            name = get_path(f"molecular_length_{typ}s_{n}.png")
             sb.FacetGrid(hist_data, col=col, hue=hue, col_wrap=3).map(
-                sb.lineplot, "Molecule Length", "Probability Density"
-            ).set(xscale="log", yscale="log").add_legend().savefig(
+                sb.lineplot, "Molecule Length", typ
+            ).set(
+                xscale="log", yscale=("log" if typ == "PDF" else "linear")
+            ).add_legend().savefig(
                 name,
                 dpi=200,
                 bbox_inches="tight",
@@ -865,15 +879,16 @@ def run(callbacks, threads, min_reads):
 
         generated.append(
             (
-                save_plots(col, hue, i + 1)
-                for i, (col, hue) in tqdm(
+                save_plots(col, hue, i + 1, typ)
+                for i, col, hue, typ in tqdm(
                     tuple(
-                        enumerate(
-                            (
-                                ("Sample Name", "Min No. Reads"),
-                                ("Min No. Reads", "Sample Name"),
-                            )
+                        (i, col, hue, typ)
+                        for i, (col, hue) in enumerate(
+                            (col, hue)
+                            for colhue in (("Sample Name", "Min No. Reads"),)
+                            for col, hue in (colhue, colhue[::-1])
                         )
+                        for typ in ("PDF", "CDF")
                     ),
                     desc="Saving Plots",
                     unit=" Plots",
@@ -883,7 +898,7 @@ def run(callbacks, threads, min_reads):
 
     print(
         "\nGenerated files:",
-        *(("\t" + str(n)) for n in chain(*generated)),
+        *(("\t" + str(n)) for n in chain.from_iterable(generated)),
         "\nDone",
         sep="\n",
         file=sys.stderr,
