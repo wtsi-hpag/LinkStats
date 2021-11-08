@@ -134,7 +134,7 @@ def ConcatDF(it):
         yield from it
         yield pd.DataFrame()
 
-    return pd.concat(iter_then_empty())
+    return pd.concat(iter_then_empty(), ignore_index=True)
 
 
 def GetAllStats(alignment_files, molecular_data, min_reads, threads):
@@ -866,11 +866,14 @@ def run(callbacks, threads, min_reads):
 
         def save_plots(col, hue, n, typ):
             name = get_path(f"molecular_length_{typ}s_{n}.png")
-            sb.FacetGrid(hist_data, col=col, hue=hue, col_wrap=3).map(
-                sb.lineplot, "Molecule Length", typ
-            ).set(
-                xscale="log", yscale=("log" if typ == "PDF" else "linear")
-            ).add_legend().savefig(
+            sb.relplot(
+                kind="line",
+                data=hist_data,
+                col=col,
+                hue=hue,
+                x="Molecule Length",
+                y=typ,
+            ).set(xscale="log", yscale=("log" if typ == "PDF" else "linear")).savefig(
                 name,
                 dpi=200,
                 bbox_inches="tight",
