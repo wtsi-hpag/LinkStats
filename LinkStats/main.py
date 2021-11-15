@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 
-import os
-import re
 import sys
 import warnings
 from concurrent.futures import ThreadPoolExecutor as TPE
+from dataclasses import dataclass
 from enum import Enum, auto
 from itertools import chain, groupby, tee
 from pathlib import Path
-from subprocess import STDOUT, CalledProcessError, Popen, check_output
+from typing import List
 
 import click as ck
 import matplotlib as mpl
@@ -20,6 +19,8 @@ import pysam
 from pysam import AlignmentFile as AF
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map as tqdm_map
+
+from _LinkStats_C import _LinkStats
 
 pysam.set_verbosity(0)
 
@@ -138,23 +139,20 @@ def ConcatDF(it):
 
 
 def GetAllStats(alignment_files, molecular_data, min_reads, threads):
+    alignment_files = tuple(alignment_files)
+
     def GetAllStatsFromAFs():
+        @dataclass(frozen=True, eq=True)
         class Alignment:
-            def __init__(self, alignment):
-                self.query_name = alignment.query_name
-                self.reference_name = alignment.reference_name
-
-                self.reference_start = alignment.reference_start
-                self.reference_end = alignment.reference_end
-
-                self.query_length = alignment.query_length
-                self.mapping_quality = alignment.mapping_quality
-
-                self.mi = alignment.get_tag("MI") if alignment.has_tag("MI") else None
-                self.bx = alignment.get_tag("BX") if alignment.has_tag("BX") else None
+            haveMI: bool
+            mapping_quality: int
+            reference_start: int
+            reference_end: int
+            query_length: int
+            mi: int
 
         class Molecule:
-            def __init__(self, alignment):
+            def __init__(self, alignment, bx, reference_name):
                 self.min = np.inf
                 self.max = 0
 
@@ -162,9 +160,9 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 self.total_read_len = 0
                 self.total_mapping_quality = 0
 
-                self.mi = alignment.mi
-                self.bx = alignment.bx
-                self.ref = alignment.reference_name
+                self.mi = alignment.mi if alignment.haveMI else None
+                self.bx = bx
+                self.ref = reference_name
 
             def update(self, alignment):
                 self.min = min(self.min, alignment.reference_start)
@@ -185,152 +183,63 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             def mean_read_depth(self):
                 return self.total_read_len / len(self)
 
+        @dataclass(frozen=True, eq=True)
         class BasicStats:
-            def __init__(self):
-                self.insert_sizes = []
-                self.total_read_length = 0
-                self.total_alignments = 0
-                self.total_dup = 0
-                self.total_qcf = 0
-                self.total_unm = 0
-                self.total_nomi = 0
-                self.total_nobx = 0
-                self.total_zeromq = 0
+            insert_sizes: List[int]
+            total_read_length: int
+            total_alignments: int
+            total_dup: int
+            total_qcf: int
+            total_unm: int
+            total_nomi: int
+            total_nobx: int
+            total_zeromq: int
 
-        class SamReader:
-            threads = 4
+        def ReadSAM(alignment_file, threads):
+            @dataclass
+            class _LinkStats_Params:
+                log: int
+                num_threads: int
+                sam_file_name: str
+                fasta_file_name: str
+                override_name: str
+                fallback_name: str
+                use_mi: bool
 
-            def __init__(self, alignment_file, threads=None):
-                self.file = ck.open_file(str(alignment_file.file), "rb")
-                self.ref = (
-                    f" -T {alignment_file.ref}"
-                    if alignment_file.ref is not None
-                    else ""
+            genome_length, ref_names, basic_stats, molecule_data = _LinkStats(
+                _LinkStats_Params(
+                    log=sys.stderr,
+                    num_threads=threads,
+                    sam_file_name=str(alignment_file.file),
+                    fasta_file_name=alignment_file.ref,
+                    override_name=alignment_file.name,
+                    fallback_name=alignment_file.stem_name,
+                    use_mi=alignment_file.use_mi_tags,
                 )
+            )
 
-            def __enter__(self):
-                self.fifo = f".{((hash(self.file) + hash(self.ref)) % 2**64)}.{os.getpid()}.fifo"
-                os.mkfifo(self.fifo)
-                self.file.__enter__()
-                self.input_proc = Popen(
-                    f"samtools view -u@ {self.threads} -F 0x900{self.ref} -o {self.fifo} -".split(),
-                    stdin=self.file,
-                )
-                self.input_proc.__enter__()
-                self.af = AF(self.fifo, threads=2)
-                return self.af.__enter__()
+            return (
+                genome_length,
+                {
+                    name: BasicStats(list(stats[0]), *stats[1:])
+                    for name, stats in basic_stats
+                },
+                {
+                    name: {
+                        ref_names[tid]: {
+                            bxmi: tuple(Alignment(*aln) for aln in alns)
+                            for bxmi, alns in t2
+                        }
+                        for tid, t2 in t1
+                    }
+                    for name, t1 in molecule_data
+                },
+            )
 
-            def __exit__(self, type, value, traceback):
-                self.af.__exit__(type, value, traceback)
-                self.input_proc.__exit__(type, value, traceback)
-                self.file.__exit__(type, value, traceback)
-                os.unlink(self.fifo)
+        def GetStats(alignment_file, threads):
+            genome_length, basic_stats, molecule_data = ReadSAM(alignment_file, threads)
 
-        def GetStats(alignment_file):
-            molecule_data = {}
-            basic_stats = {}
-
-            with SamReader(alignment_file=alignment_file) as sam_reader:
-                genome_length = sum(
-                    map(
-                        sam_reader.header.get_reference_length,
-                        sam_reader.header.references,
-                    )
-                )
-
-                rg_id_to_sm = {
-                    d["ID"]: d.setdefault("SM", d["ID"])
-                    for d in sam_reader.header.as_dict().setdefault("RG", ())
-                }
-
-                def get_name(al):
-                    if alignment_file.name is not None:
-                        return alignment_file.name
-                    if al.has_tag("RG"):
-                        return rg_id_to_sm.setdefault(
-                            al.get_tag("RG"), alignment_file.stem_name
-                        )
-                    return alignment_file.stem_name
-
-                for alignment in tqdm(
-                    sam_reader,
-                    desc="SAM read ("
-                    + (
-                        alignment_file.name
-                        if alignment_file.name is not None
-                        else alignment_file.stem_name
-                    )
-                    + ")",
-                    unit=" alignments",
-                    unit_scale=True,
-                ):
-                    if alignment.template_length > 0:
-                        basic_stats.setdefault(
-                            get_name(alignment), BasicStats()
-                        ).insert_sizes.append(alignment.template_length)
-
-                    basic_stats.setdefault(
-                        get_name(alignment), BasicStats()
-                    ).total_read_length += alignment.query_length
-                    basic_stats.setdefault(
-                        get_name(alignment), BasicStats()
-                    ).total_alignments += 1
-
-                    if alignment.is_unmapped:
-                        basic_stats.setdefault(
-                            get_name(alignment), BasicStats()
-                        ).total_unm += 1
-                    if alignment.is_duplicate:
-                        basic_stats.setdefault(
-                            get_name(alignment), BasicStats()
-                        ).total_dup += 1
-                    if alignment.is_qcfail:
-                        basic_stats.setdefault(
-                            get_name(alignment), BasicStats()
-                        ).total_qcf += 1
-
-                    if not (
-                        alignment.is_unmapped
-                        or alignment.is_duplicate
-                        or alignment.is_qcfail
-                    ):
-                        if not alignment.has_tag("MI"):
-                            basic_stats.setdefault(
-                                get_name(alignment), BasicStats()
-                            ).total_nomi += 1
-                        if not alignment.has_tag("BX"):
-                            basic_stats.setdefault(
-                                get_name(alignment), BasicStats()
-                            ).total_nobx += 1
-                        if alignment.mapping_quality == 0:
-                            basic_stats.setdefault(
-                                get_name(alignment), BasicStats()
-                            ).total_zeromq += 1
-
-                        if (
-                            alignment.mapping_quality > 0
-                            and alignment.has_tag("BX")
-                            and (
-                                alignment.has_tag("MI")
-                                if alignment_file.use_mi_tags
-                                else True
-                            )
-                        ):
-                            molecule_data.setdefault(
-                                get_name(alignment), {}
-                            ).setdefault(alignment.reference_name, {}).setdefault(
-                                alignment.get_tag("BX")
-                                + (
-                                    ("_" + str(alignment.get_tag("MI")))
-                                    if alignment_file.use_mi_tags
-                                    else ""
-                                ),
-                                [],
-                            ).append(
-                                Alignment(alignment)
-                            )
-
-            def ClusterAlignments(alignments):
+            def ClusterAlignments(alignments, bx, reference_name):
                 def pairwise(it):
                     a, b = tee(it)
                     next(b, None)
@@ -338,15 +247,6 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
                 g = nx.Graph()
                 g.add_nodes_from(alignments)
-                # g.add_edges_from(
-                #    (g[0], h)
-                #    for _, git in groupby(
-                #        sorted(alignments, key=lambda a: a.query_name),
-                #        lambda a: a.query_name,
-                #    )
-                #    for g in (tuple(git),)
-                #    for h in g[1:]
-                # )
                 g.add_edges_from(
                     (a, b)
                     for a, b in pairwise(
@@ -358,7 +258,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 for cc in nx.connected_components(g):
                     cc = iter(cc)
                     c = next(cc)
-                    m = Molecule(c)
+                    m = Molecule(c, bx, reference_name)
                     for c in chain((c,), cc):
                         m.update(c)
                     yield m
@@ -376,9 +276,9 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                         molecule.mean_mapq,
                     )
                     for name, a in molecule_data.items()
-                    for b in a.values()
-                    for c in b.values()
-                    for molecule in ClusterAlignments(c)
+                    for reference_name, b in a.items()
+                    for (bx, _), c in b.items()
+                    for molecule in ClusterAlignments(c, bx, reference_name)
                 ),
                 columns=(
                     "Sample Name",
@@ -513,8 +413,12 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 ),
             )
 
-        with TPE(max_workers=max(threads // SamReader.threads, 1)) as exe:
-            return exe.map(GetStats, alignment_files)
+        max_workers = min(threads, len(alignment_files))
+        with TPE(max_workers=max_workers) as exe:
+            return exe.map(
+                lambda af: GetStats(af, threads=max(threads // max_workers, 1)),
+                alignment_files,
+            )
 
     def GetAllStatsFromCSVs():
         mol_files = tuple(mol.file for mol in molecular_data)
@@ -760,27 +664,6 @@ def save_plots(prefix):
 @cli.result_callback()
 def run(callbacks, threads, min_reads):
     print("Starting...\n", file=sys.stderr)
-
-    try:
-        match = re.match(
-            r"^samtools (?P<major>\d+)\.(?P<minor>\d+)",
-            check_output("samtools --version".split(), stderr=STDOUT).decode("utf-8"),
-        )
-        if match is None:
-            raise ck.ClickException("Could not determine 'samtools' version")
-
-        major = int(match.group("major"))
-        minor = int(match.group("minor"))
-
-        if not (major > 1 or (major == 1 and minor >= 10)):
-            raise ck.ClickException(
-                f"'samtools' version {major}.{minor} found, version 1.10 or later required"
-            )
-
-    except FileNotFoundError:
-        raise ck.ClickException("'samtools' not found on $PATH")
-    except CalledProcessError as ex:
-        raise ck.ClickException(str(ex))
 
     csv = tuple(cp for cp in callbacks if cp.is_CP)
     if len(csv) == 0:
