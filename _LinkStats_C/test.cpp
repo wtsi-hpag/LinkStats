@@ -22,14 +22,14 @@ main(s32 numCLIArgs, const char **cliArgs)
     args.useMI = 1;
     args.arena = &workingSet;
 
-    link_stats_return_data *data;
-    if ((data = LinkStats(&args)))
+    link_stats_return_data data;
+    if (LinkStats(&args, data))
     {
-        printf("\nGenome Length: %" PRIu64 "\n\n", data->genomeLength);
-        for (const auto& [id, stats] : data->basicStats)
+        printf("\nGenome Length: %" PRIu64 "\n\n", data.genomeLength);
+        for (const auto& [id, stats] : data.basicStats)
         {
             printf("%s:\n", id.c_str());
-            printf("\t%" PRIu64 " inserts\n", stats->intertSizes.count);
+            printf("\t%" PRIu64 " inserts\n", stats->insertSizes.count);
             printf("\t%" PRIu64 " total read length\n", stats->totalReadLength);
             printf("\t%" PRIu64 " alignments\n", stats->totalAlignments);
             printf("\t%" PRIu64 " unmapped\n", stats->totalUnM);

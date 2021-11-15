@@ -1,51 +1,46 @@
-import os
 import sys
-from glob import glob
-from pathlib import Path
 from subprocess import Popen
 
 import numpy as np
-from setuptools import Extension, find_packages, setup
+from setuptools import find_packages, setup
+from setuptools.command.install import install as setup_install
 
 VERSION = "0.0.1"
-TMP_PREFIX = Path(os.getcwd()).absolute() / "libLinkStats_Prefix"
+
+LINKSTATS_C = "_LinkStats_C"
 
 
-def build_liblinkstats():
-    with Popen(
-        f"meson rewrite kwargs set project / version {VERSION}".split(),
-        cwd="libLinkStats",
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    ) as proc:
-        if proc.wait() != 0:
-            sys.exit("Error setting meson version")
+def install_linkstats_c():
+    for name, cmd in (
+        (
+            "setting meson version",
+            f"meson rewrite kwargs set project / version {VERSION}",
+        ),
+        (
+            "meson setup",
+            f"meson setup --buildtype=release --unity on --prefix={sys.prefix} builddir",
+        ),
+        ("_LinkStats_C compile", "meson compile -C builddir"),
+        ("_LinkStats_C test", "meson test -C builddir"),
+        ("_LinkStats_C install", "meson install -C builddir"),
+    ):
+        with Popen(
+            cmd.split(),
+            cwd=LINKSTATS_C,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+        ) as proc:
+            if proc.wait() != 0:
+                sys.exit("Error during " + name)
 
-    with Popen(
-        f"meson setup --buildtype=release --unity on --prefix={TMP_PREFIX} builddir".split(),
-        cwd="libLinkStats",
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    ) as proc:
-        if proc.wait() != 0:
-            sys.exit("Error during meson setup")
 
-    with Popen(
-        f"meson install -C builddir".split(),
-        cwd="libLinkStats",
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    ) as proc:
-        if proc.wait() != 0:
-            sys.exit("Error during libLinkStats compile")
-
-    return tuple(glob(str(TMP_PREFIX / "**" / "libLinkStats.*"), recursive=True))
+class LinkStatsInstall(setup_install):
+    def run(self):
+        install_linkstats_c()
+        setup_install.run(self)
 
 
 def main():
-
-    libLinkStats_object = build_liblinkstats()
-    assert len(libLinkStats_object) == 1
 
     setup(
         name="LinkStats",
@@ -66,22 +61,11 @@ def main():
             "networkx>=2.6.3",
         ),
         description="Collect stats from aligned linked-reads",
-        ext_modules=[
-            Extension(
-                "_LinkStats_C",
-                sources=["LinkStats_PyCExt.cpp"],
-                include_dirs=[TMP_PREFIX / "include", np.get_include()],
-                library_dirs=[os.getcwd()],
-                extra_compile_args=["-Ofast"],
-                extra_objects=libLinkStats_object,
-                extra_link_args=["-lstdc++"],
-                language="c++20",
-            )
-        ],
         entry_points="""
               [console_scripts]
               LinkStats=LinkStats.main:cli
           """,
+        cmdclass={"install": LinkStatsInstall},
     )
 
 

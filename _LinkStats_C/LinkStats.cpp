@@ -135,8 +135,8 @@ NewAlignment(bam1_t *record, s32 *mi, memory_arena *arena)
     return al;
 }
 
-link_stats_return_data *
-LinkStats(link_stats_run_args *args)
+u08
+LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 {
     char LogBuffer[1024];
     u08 runState = 0;
@@ -228,7 +228,7 @@ LinkStats(link_stats_run_args *args)
 
 			{
 			    s64 insertSize;
-			    if ((insertSize = record->core.isize) > 0) LLAddValue(&stats->intertSizes, (u64)insertSize, workingSet);
+			    if ((insertSize = record->core.isize) > 0) LLAddValue(&stats->insertSizes, (u64)insertSize, workingSet);
 
 			    stats->totalReadLength += (u64)record->core.l_qseq;
 			    ++stats->totalAlignments;
@@ -304,7 +304,7 @@ LinkStats(link_stats_run_args *args)
 		for (const auto& [id, stats] : basicStats)
 		{
 		    Log("%s:", id.c_str());
-		    Log("\t%" PRIu64 " inserts", stats->intertSizes.count);
+		    Log("\t%" PRIu64 " inserts", stats->insertSizes.count);
 		    Log("\t%" PRIu64 " total read length", stats->totalReadLength);
 		    Log("\t%" PRIu64 " alignments", stats->totalAlignments);
 		    Log("\t%" PRIu64 " unmapped", stats->totalUnM);
@@ -321,15 +321,13 @@ LinkStats(link_stats_run_args *args)
 	if (hts_close(samFile)) runState = 0;
     }
 
-    link_stats_return_data *returnData = 0;
     if (runState)
     {
-	returnData = PushStructP(workingSet, link_stats_return_data);
-	returnData->genomeLength = genomeLength;
-	returnData->refNames = refNames;
-	returnData->basicStats = basicStats;
-	returnData->moleculeData = moleculeData;
+	returnData.genomeLength = genomeLength;
+	returnData.refNames = refNames;
+	returnData.basicStats = basicStats;
+	returnData.moleculeData = moleculeData;
     }
 
-    return returnData;
+    return runState;
 }

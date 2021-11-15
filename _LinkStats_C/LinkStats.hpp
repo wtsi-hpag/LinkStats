@@ -64,7 +64,7 @@ ll
 struct
 basic_stats
 {
-    ll intertSizes;
+    ll insertSizes;
     u64 totalReadLength;
     u64 totalAlignments;
     u64 totalDup;
@@ -108,6 +108,6 @@ link_stats_return_data
     std::map<std::string, std::map<s32, std::map<std::pair<std::string, s32>, ll *>>> moleculeData;
 };
 
-link_stats_return_data *LinkStats(link_stats_run_args *args);
+u08 LinkStats(link_stats_run_args *args, link_stats_return_data &data);
 
 
