@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 
+import logging
+import os
 import sys
 import warnings
 from concurrent.futures import ThreadPoolExecutor as TPE
 from dataclasses import dataclass
 from enum import Enum, auto
+from importlib.metadata import version as get_version
 from itertools import chain, groupby, tee
 from pathlib import Path
+from threading import Thread
 from typing import List
 
 import click as ck
@@ -15,20 +19,10 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
-import pysam
-from pysam import AlignmentFile as AF
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map as tqdm_map
 
 from _LinkStats_C import _LinkStats
-
-pysam.set_verbosity(0)
-
-
-warnings.filterwarnings("ignore", message="divide by zero")
-warnings.filterwarnings("ignore", message="invalid value encountered in double_scalars")
-warnings.filterwarnings("ignore", message="invalid value encountered in true_divide")
-
 
 mpl.use("agg")
 mpl.rc("font", **{"family": "sans", "weight": "normal", "size": 14})
@@ -40,6 +34,89 @@ plt.rcParams["figure.figsize"] = (10.0, 7.0)
 import seaborn as sb
 
 sb.set(style="darkgrid", color_codes=True)
+
+
+NAME = __name__.split(".")[0]
+VERSION = get_version(NAME)
+DESCRIPTION = "Collect and process statistics from aligned linked-reads"
+LICENCE = (
+    "Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited"
+)
+
+
+def create_logger_handle(stream, typeid, level):
+    class LogFilter(logging.Filter):
+        def __init__(self, level):
+            super().__init__()
+            self.__level = level
+
+        def filter(self, record):
+            return record.levelno == self.__level
+
+    handle = logging.StreamHandler(stream=stream)
+    handle.setLevel(level=level)
+    handle.setFormatter(
+        logging.Formatter("[%(name)s {id}] :: %(message)s".format(id=typeid))
+    )
+    handle.addFilter(LogFilter(level=level))
+
+    return handle
+
+
+logger = logging.getLogger(NAME)
+
+logger.setLevel(logging.INFO)
+logger.addHandler(
+    create_logger_handle(stream=sys.stderr, typeid="status", level=logging.INFO)
+)
+logger.addHandler(
+    create_logger_handle(stream=sys.stderr, typeid="error", level=logging.ERROR)
+)
+logger.addHandler(
+    create_logger_handle(stream=sys.stderr, typeid="warning", level=logging.WARNING)
+)
+
+
+class LoggerHandle:
+    def __init__(self, id):
+        self.threadsAndHandles = []
+        self.handle = self.add_logger(log_func=logger.info, id=id)
+
+    def add_logger(self, log_func, id):
+        read, write = os.pipe()
+
+        def _thread_func():
+            with os.fdopen(read, encoding="utf-8", errors="replace") as file:
+                for line in file:
+                    log_func(f"({id}) {line[:-1]}")
+
+        thread = Thread(target=_thread_func)
+        thread.start()
+        self.threadsAndHandles.append((thread, write))
+
+        return write
+
+    def __enter__(self):
+        return self.handle
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for thread, handle in self.threadsAndHandles:
+            os.close(handle)
+            thread.join()
+
+
+def _showwarning(message, category, filename, lineno, file=None, line=None):
+    logger.warning(
+        f"[{filename} {lineno}] {message}"
+        if line is None
+        else f"[{filename} {lineno}] {message} {line}"
+    )
+
+
+warnings.showwarning = _showwarning
+warnings.filterwarnings("ignore", message="divide by zero")
+warnings.filterwarnings("ignore", message="invalid value encountered in double_scalars")
+warnings.filterwarnings("ignore", message="invalid value encountered in true_divide")
 
 
 class CallBack:
@@ -206,17 +283,18 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 fallback_name: str
                 use_mi: bool
 
-            genome_length, ref_names, basic_stats, molecule_data = _LinkStats(
-                _LinkStats_Params(
-                    log=sys.stderr,
-                    num_threads=threads,
-                    sam_file_name=str(alignment_file.file),
-                    fasta_file_name=alignment_file.ref,
-                    override_name=alignment_file.name,
-                    fallback_name=alignment_file.stem_name,
-                    use_mi=alignment_file.use_mi_tags,
+            with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handle:
+                genome_length, ref_names, basic_stats, molecule_data = _LinkStats(
+                    _LinkStats_Params(
+                        log=handle,
+                        num_threads=threads,
+                        sam_file_name=str(alignment_file.file),
+                        fasta_file_name=alignment_file.ref,
+                        override_name=alignment_file.name,
+                        fallback_name=alignment_file.stem_name,
+                        use_mi=alignment_file.use_mi_tags,
+                    )
                 )
-            )
 
             return (
                 genome_length,
@@ -413,7 +491,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 ),
             )
 
-        max_workers = min(threads, len(alignment_files))
+        max_workers = max(min(threads, len(alignment_files)), 1)
         with TPE(max_workers=max_workers) as exe:
             return exe.map(
                 lambda af: GetStats(af, threads=max(threads // max_workers, 1)),
@@ -663,7 +741,8 @@ def save_plots(prefix):
 
 @cli.result_callback()
 def run(callbacks, threads, min_reads):
-    print("Starting...\n", file=sys.stderr)
+    logger.info("Starting...")
+    logger.info("")
 
     csv = tuple(cp for cp in callbacks if cp.is_CP)
     if len(csv) == 0:
@@ -699,7 +778,10 @@ def run(callbacks, threads, min_reads):
     )
 
     if summary_data.shape[0] > 0:
-        print("\n", summary_data, "\n", sep="", file=sys.stderr)
+        logger.info("")
+        for line in str(summary_data).split("\n"):
+            logger.info(line)
+        logger.info("")
 
     hist_data = GetAllMolLenHists(
         all_data, (hd for hd in callbacks if hd.is_HD), min_reads, threads
@@ -782,13 +864,14 @@ def run(callbacks, threads, min_reads):
             )
         )
 
-    print(
-        "\nGenerated files:",
-        *(("\t" + str(n)) for n in chain.from_iterable(generated)),
-        "\nDone",
-        sep="\n",
-        file=sys.stderr,
-    )
+    generated = tuple(("\t" + str(n)) for n in chain.from_iterable(generated))
+
+    logger.info("")
+    logger.info("Generated files:")
+    for line in generated:
+        logger.info(line)
+    logger.info("")
+    logger.info("Done")
 
 
 if __name__ == "__main__":

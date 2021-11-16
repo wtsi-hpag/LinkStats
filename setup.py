@@ -56,7 +56,6 @@ def main():
             "numpy>=1.20.3",
             "seaborn>=0.11.1",
             "matplotlib>=3.4.2",
-            "pysam>=0.16.0.1",
             "tqdm>=4.61.1",
             "networkx>=2.6.3",
         ),
