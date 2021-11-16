@@ -7,7 +7,9 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor as TPE
 from dataclasses import dataclass
 from enum import Enum, auto
+from functools import partial
 from importlib.metadata import version as get_version
+from io import StringIO
 from itertools import chain, groupby, tee
 from pathlib import Path
 from threading import Thread
@@ -19,8 +21,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from tqdm.contrib.concurrent import thread_map as tqdm_map
+from tqdm import tqdm as _tqdm
+from tqdm.contrib.concurrent import thread_map as _tqdm_map
 
 from _LinkStats_C import _LinkStats
 
@@ -38,9 +40,9 @@ sb.set(style="darkgrid", color_codes=True)
 
 NAME = __name__.split(".")[0]
 VERSION = get_version(NAME)
-DESCRIPTION = "Collect and process statistics from aligned linked-reads"
+DESCRIPTION = "Collect and process statistics from aligned linked-reads."
 LICENCE = (
-    "Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited"
+    "Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited."
 )
 
 
@@ -80,7 +82,8 @@ logger.addHandler(
 class LoggerHandle:
     def __init__(self, id):
         self.threadsAndHandles = []
-        self.handle = self.add_logger(log_func=logger.info, id=id)
+        self.info = self.add_logger(log_func=logger.info, id=id)
+        self.error = self.add_logger(log_func=logger.error, id=id)
 
     def add_logger(self, log_func, id):
         read, write = os.pipe()
@@ -96,8 +99,13 @@ class LoggerHandle:
 
         return write
 
+    @dataclass
+    class LogHandles:
+        info: int
+        error: int
+
     def __enter__(self):
-        return self.handle
+        return self.LogHandles(info=self.info, error=self.error)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         for thread, handle in self.threadsAndHandles:
@@ -117,6 +125,28 @@ warnings.showwarning = _showwarning
 warnings.filterwarnings("ignore", message="divide by zero")
 warnings.filterwarnings("ignore", message="invalid value encountered in double_scalars")
 warnings.filterwarnings("ignore", message="invalid value encountered in true_divide")
+
+
+class TqdmToLogger(StringIO):
+    buf = ""
+
+    def __init__(self):
+        super(TqdmToLogger, self).__init__()
+
+    def write(self, buf):
+        self.buf = buf.strip("\r\n")
+        return len(self.buf)
+
+    def flush(self):
+        logger.info(self.buf)
+
+    def close(self):
+        logger.info("")
+        super(TqdmToLogger, self).close(self)
+
+
+tqdm = partial(_tqdm, file=TqdmToLogger())
+tqdm_map = partial(_tqdm_map, file=TqdmToLogger())
 
 
 class CallBack:
@@ -276,6 +306,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             @dataclass
             class _LinkStats_Params:
                 log: int
+                error: int
                 num_threads: int
                 sam_file_name: str
                 fasta_file_name: str
@@ -283,10 +314,11 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 fallback_name: str
                 use_mi: bool
 
-            with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handle:
+            with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handles:
                 genome_length, ref_names, basic_stats, molecule_data = _LinkStats(
                     _LinkStats_Params(
-                        log=handle,
+                        log=handles.info,
+                        error=handles.error,
                         num_threads=threads,
                         sam_file_name=str(alignment_file.file),
                         fasta_file_name=alignment_file.ref,
@@ -615,7 +647,7 @@ def documenter(docstring):
     "--threads",
     type=ck.IntRange(1, None, clamp=True),
     default=4,
-    help="Number of threads to use, Default=4",
+    help="Number of threads to use. Default=4.",
 )
 @ck.option(
     "-m",
@@ -623,16 +655,20 @@ def documenter(docstring):
     type=ck.IntRange(1, None, clamp=True),
     multiple=True,
     default=(1, 3, 5, 10),
-    help="Minimum reads per molecule for analysis, multiple values possible, Default=(1, 3, 5, 10)",
+    help="Minimum reads per molecule for analysis, multiple values possible. Default=(1, 3, 5, 10).",
 )
 @ck.version_option()
 @documenter(
-    """
-Collect summary and molecular data from aligned short linked-reads in SAM format.
+    f"""
+{NAME} {VERSION}
 
 \b
-Combine multiple data sources into summary plots.
+{DESCRIPTION}
 
+\b
+{LICENCE}
+
+\b
 \b
 Usage Example, read SAM/BAM/CRAM from <stdin> and save the summary and molecule data in csv format. Analyse molecules grouped by 5 and 10 minimum reads per molecule.
 -------------
@@ -650,31 +686,36 @@ def cli(threads, min_reads):
 
 @cli.command()
 @ck.argument("path", type=ck.Path(readable=True, path_type=Path))
-@ck.option("-r", "--reference", type=ck.Path(exists=True), help="FASTA reference")
-@ck.option("-n", "--name", type=str, help="Sample name")
-@ck.option("--mi/--no-mi", default=False, help="Group by MI tags as well as BX")
+@ck.option(
+    "-r",
+    "--reference",
+    type=ck.Path(exists=True),
+    help="FASTA reference for CRAM decoding.",
+)
+@ck.option(
+    "-n", "--name", type=str, help="Sample name, overrides name from SM or RG tags."
+)
+@ck.option(
+    "--mi/--no-mi",
+    default=False,
+    help="Group by MI:I as well as BX:Z SAM tags. Default=False.",
+)
 @ck.option(
     "-t",
     "--threshold",
     type=int,
     default=50000,
-    help="Maximum alignment separation per molecule",
+    help="Maximum allowed separation between alignments grouped to the same molecule.",
 )
 @documenter(
     """
 Read SAM/BAM/CRAM data from PATH.
 
 \b
-Creates summary and molecular data-sets for each sample-name (SM tag).
+Creates summary and molecular data-sets for each sample-name (SM:Z tag or RG:Z SAM tag).
 
 \b
-Alignments must have MI (molecular id) and BX (barcode) tags.
-
-\b
-Option -n sets a same-name for all data, taking preference over SM tags.
-
-\b
-Option -r sets a FASTA reference for CRAM decoding.
+Alignments must have BX:Z (barcode) SAM tags.
 """
 )
 def sam_data(path, mi, threshold, reference=None, name=None):
@@ -713,15 +754,21 @@ def hist_data(file):
 
 @cli.command()
 @ck.argument("prefix", type=ck.Path(readable=True, path_type=Path))
-@ck.option("--summ/--no-summ", default=True, help="Save summary data table")
-@ck.option("--mol/--no-mol", default=False, help="Save molecule data table")
-@ck.option("--hist/--no-hist", default=False, help="Save histogram data table")
+@ck.option(
+    "--summ/--no-summ", default=True, help="Save summary data table. Default=True."
+)
+@ck.option(
+    "--mol/--no-mol", default=False, help="Save molecule data table. Default=False."
+)
+@ck.option(
+    "--hist/--no-hist", default=False, help="Save histogram data table. Default=False."
+)
 @documenter(
     """
-Saves summary, molecule or histogram data to CSV files at PREFIX_
+Saves summary, molecule or histogram data to CSV files at PREFIX_.
 
 \b
-By default, only summary data is saved
+By default, only summary data is saved.
 """
 )
 def save_csvs(prefix, summ, mol, hist):
@@ -732,7 +779,7 @@ def save_csvs(prefix, summ, mol, hist):
 @ck.argument("prefix", type=ck.Path(readable=True, path_type=Path))
 @documenter(
     """
-Generates plots from any histogram data and saves them at PREFIX_
+Generates plots from any histogram data and saves them at PREFIX_.
 """
 )
 def save_plots(prefix):
@@ -741,6 +788,10 @@ def save_plots(prefix):
 
 @cli.result_callback()
 def run(callbacks, threads, min_reads):
+    def Error(msg):
+        logger.error(msg)
+        sys.exit(1)
+
     logger.info("Starting...")
     logger.info("")
 
@@ -754,8 +805,12 @@ def run(callbacks, threads, min_reads):
             )
         csv = csv[-1]
 
+    if csv and csv.save_summ and len(tuple(af for af in callbacks if af.is_AF)) == 0:
+        warnings.warn("No SAM data input, cannot output summary data")
+        csv.save_summ = False
+
     if csv and not csv.any_set:
-        raise ck.ClickException("CSV prefix specified, but no data set to be saved")
+        Error("CSV prefix specified, but no data set to be saved")
 
     plot = tuple(pp.prefix for pp in callbacks if pp.is_PP)
     if len(plot) == 0:
@@ -768,7 +823,7 @@ def run(callbacks, threads, min_reads):
         plot = plot[-1]
 
     if not (csv or plot):
-        raise ck.ClickException("Neither CSV nor Plot prefix specified, nothing to do")
+        Error("Neither CSV nor Plot prefix specified, nothing to do")
 
     all_data, summary_data = GetAllStats(
         (af for af in callbacks if af.is_AF),
@@ -783,8 +838,12 @@ def run(callbacks, threads, min_reads):
             logger.info(line)
         logger.info("")
 
-    hist_data = GetAllMolLenHists(
-        all_data, (hd for hd in callbacks if hd.is_HD), min_reads, threads
+    hist_data = (
+        GetAllMolLenHists(
+            all_data, (hd for hd in callbacks if hd.is_HD), min_reads, threads
+        )
+        if ((csv and csv.save_hist) or plot)
+        else None
     )
 
     def base_get_path(f, prefix):
@@ -798,15 +857,20 @@ def run(callbacks, threads, min_reads):
 
         def save_csv(args):
             df, name = args
-            df.to_csv(get_path(name), index=False)
-            return get_path(name)
+            name = get_path(name)
+            df.to_csv(name, index=False)
+            return name
 
         generated.append(
             iter(
                 tqdm_map(
                     save_csv,
                     (
-                        (((summary_data, "summary_data.csv"),) if csv.save_summ else ())
+                        (
+                            ((summary_data, "summary_data.csv"),)
+                            if (csv.save_summ and summary_data.shape[0] > 0)
+                            else ()
+                        )
                         + (
                             ((all_data, "molecular_data.csv.bz2"),)
                             if csv.save_mol

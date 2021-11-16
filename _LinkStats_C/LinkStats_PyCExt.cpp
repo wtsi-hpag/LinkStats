@@ -4,6 +4,19 @@
 
 #include <LinkStats.hpp>
 
+#pragma clang diagnostic push
+#pragma GCC diagnostic ignored "-Wreserved-id-macro"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wextra-semi-stmt"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wconditional-uninitialized"
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
+#pragma GCC diagnostic ignored "-Wpadded"
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#include "stb_sprintf.h"
+#pragma clang diagnostic pop
+
 #define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
 #define ForLoop(n) for (u32 index = 0; index < (n); ++index)
 #define ForLoop64(n) for (u64 index = 0; index < (n); ++index)
@@ -19,7 +32,7 @@
 
 static
 PyObject *
-BasicStatsToTuple(basic_stats *stats)
+BasicStatsToTuple (basic_stats *stats)
 {
     PyObject *insertSizes = PyTuple_New((Py_ssize_t)stats->insertSizes.count);
     u32 index = 0;
@@ -30,7 +43,7 @@ BasicStatsToTuple(basic_stats *stats)
 
 static
 PyObject *
-MoleculeAlignmentsToTuple(const ll *list)
+MoleculeAlignmentsToTuple (const ll *list)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
     {
@@ -46,7 +59,7 @@ MoleculeAlignmentsToTuple(const ll *list)
 
 static
 PyObject *
-MoleculeMap2ToTuple(const std::map<std::pair<std::string, s32>, ll *> &map2)
+MoleculeMap2ToTuple (const std::map<std::pair<std::string, s32>, ll *> &map2)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map2.size());
     {
@@ -58,7 +71,7 @@ MoleculeMap2ToTuple(const std::map<std::pair<std::string, s32>, ll *> &map2)
 
 static
 PyObject *
-MoleculeMap1ToTuple(const std::map<s32, std::map<std::pair<std::string, s32>, ll *>> &map1)
+MoleculeMap1ToTuple (const std::map<s32, std::map<std::pair<std::string, s32>, ll *>> &map1)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map1.size());
     {
@@ -72,6 +85,18 @@ static
 PyObject *
 Main (PyObject *self, PyObject *args, PyObject *kwargs)
 {
+    char ErrorBuffer[1024];
+    s32 errorFD = -1;
+    #define Error(message, ...) \
+    do \
+    { \
+	u64 n = (u64)stbsp_snprintf(ErrorBuffer, sizeof(ErrorBuffer), message, ##__VA_ARGS__); \
+	write(errorFD, ErrorBuffer, n); \
+	write(errorFD, "\n", 1); \
+	PyErr_SetString(PyExc_Exception, ErrorBuffer); \
+	return 0;\
+    } while (0)
+
     s32 logFD;
     u32 nThreads;
     char *samFileName;
@@ -82,9 +107,9 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     {
 	PyObject *objParams;
 	static const char *kwlist[] = {"params", 0};
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char **)kwlist, &objParams)) return(0);
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char **)kwlist, &objParams)) Error("_LinkStats_C No input 'params'");
 
-	PyObject *objLogFD, *objNumThreads, *objSamFileName, *objFastaRefFileName, *objOverrideName, *objFallbackName, *objUseMI;
+	PyObject *objErrorFD, *objLogFD, *objNumThreads, *objSamFileName, *objFastaRefFileName, *objOverrideName, *objFallbackName, *objUseMI;
 
 	{
 	    struct
@@ -98,6 +123,10 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 		{
 		    &objLogFD,
 		    (char *)"log"
+		},
+		{
+		    &objErrorFD,
+		    (char *)"error"
 		},
 		{
 		    &objNumThreads,
@@ -131,11 +160,12 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 		PyObject *objName = Py_BuildValue("s", param->name);
 		*(param->obj) = PyObject_GetAttr(objParams, objName);
 		Py_DECREF(objName);
-		if (!(*(param->obj))) return(0);
+		if (!(*(param->obj))) Error("_LinkStats_C No parm %s", param->name);
 	    }
 	}
 
-	if ((logFD = (s32)PyObject_AsFileDescriptor(objLogFD)) < 0) return(0);
+	if ((logFD = (s32)PyObject_AsFileDescriptor(objLogFD)) < 0) Error("_LinkStats_C Invalid logFD '%d'", logFD);
+	if ((errorFD = (s32)PyObject_AsFileDescriptor(objErrorFD)) < 0) Error("_LinkStats_C Invalid errorFD '%d'", errorFD);
 
 	nThreads = (u32)PyLong_AsUnsignedLong(objNumThreads);
 	Py_DECREF(objNumThreads);
@@ -167,7 +197,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     Py_BEGIN_ALLOW_THREADS;
     runState = LinkStats(&runArgs, data);
     Py_END_ALLOW_THREADS;
-    if (!runState) return(0);
+    if (!runState) Error("_LinkStats_C Run Error");
 
     PyObject *genomeLength = PyLong_FromUnsignedLongLong(data.genomeLength);
     
@@ -213,6 +243,5 @@ Module =
 PyMODINIT_FUNC
 PyInit__LinkStats_C()
 {
-    PyObject *obj = PyModule_Create(&Module);
-    return(obj);
+    return PyModule_Create(&Module);
 }

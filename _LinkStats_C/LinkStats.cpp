@@ -45,13 +45,13 @@ FillCBTask(void *in)
 	bam1_t *record = data->buffer->records + head;
 	bam_set_mempolicy(record, BAM_USER_OWNS_STRUCT | BAM_USER_OWNS_DATA);
 	
-	if ((BufferSize - bHead) < (AlignmentMemory + 1)) bHead = 0;
+	if ((BufferSize - bHead) < AlignmentMemory) bHead = 0;
 	u32 freeMem;
 	do
 	{
 	    u32 bTail = (u32)data->buffer->bufferTail;
 	    freeMem = (((bHead < bTail) ? bTail : BufferSize) - bHead) & (~7U);
-	} while (freeMem < (AlignmentMemory + 1));
+	} while (freeMem < AlignmentMemory);
 	
 	record->data = data->buffer->dataBuffer + bHead;
 	record->m_data = freeMem;
@@ -197,9 +197,10 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 	    kstring_t string = KS_INITIALIZE;
 	    u64 recordCount = 0;
 	    u32 tail = (u32)cBuffer->tail;
-	    while ((tail != (u32)cBuffer->head) || cbThreadData->threadRunning)
+	    u32 head;
+	    while ((tail != (head = (u32)cBuffer->head)) || cbThreadData->threadRunning)
 	    {
-		if (tail != (u32)cBuffer->head)
+		if (tail != head)
 		{
 		    bam1_t *record = cBuffer->records + tail;
 
