@@ -1,11 +1,14 @@
 import sys
-from subprocess import Popen
+from subprocess import Popen, PIPE
 
 import numpy as np
 from setuptools import find_packages, setup
 from setuptools.command.install import install as setup_install
 
-VERSION = "0.0.1"
+VERSION = "0.0.0"
+with Popen("git describe".split(), stdout=PIPE, stderr=sys.stderr, text=True) as proc:
+    if proc.wait() == 0:
+        VERSION = next(proc.stdout).strip()
 
 LINKSTATS_C = "_LinkStats_C"
 
