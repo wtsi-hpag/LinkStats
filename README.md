@@ -8,18 +8,18 @@ LinkStats --help
 
 # Requirments, Running
 * Linux
+* [htslib](https://www.htslib.org/) >=1.14
 * [python](https://www.python.org/) >=3.8
-* [htslib]() >=1.14
-* [click]() >=8.0.1
-* [pandas]() >=1.2.5
-* [numpy]() >=1.20.3
-* [seaborn]() >=0.11.1
-* [matplotlib]() >=3.4.2
-* [tqdm]() >=4.61.1
-* [networkx]() >=2.6.3
+    * [click](https://click.palletsprojects.com/en/8.0.x/) >=8.0.1
+    * [pandas](https://pandas.pydata.org/) >=1.2.5
+    * [numpy](https://numpy.org/) >=1.20.3
+    * [seaborn](https://seaborn.pydata.org/) >=0.11.1
+    * [matplotlib](https://matplotlib.org/stable/index.html) >=3.4.2
+    * [tqdm](https://tqdm.github.io/) >=4.61.1
+    * [networkx](https://networkx.org/) >=2.6.3
 
 # Requirments, Installing
-* [meson]()
+* [meson](https://mesonbuild.com/)
 * C++ compiler (tested with [clang](https://clang.llvm.org/) 11)
 * [setuptools](https://setuptools.readthedocs.io/en/latest/)
 * [git](https://git-scm.com/)
