@@ -65,25 +65,25 @@ def create_logger_handle(stream, typeid, level):
     return handle
 
 
-logger = logging.getLogger(NAME)
+LOGGER = logging.getLogger(NAME)
 
-logger.setLevel(logging.INFO)
-logger.addHandler(
+LOGGER.setLevel(logging.INFO)
+LOGGER.addHandler(
     create_logger_handle(stream=sys.stderr, typeid="status", level=logging.INFO)
 )
-logger.addHandler(
+LOGGER.addHandler(
     create_logger_handle(stream=sys.stderr, typeid="error", level=logging.ERROR)
 )
-logger.addHandler(
+LOGGER.addHandler(
     create_logger_handle(stream=sys.stderr, typeid="warning", level=logging.WARNING)
 )
 
 
 class LoggerHandle:
     def __init__(self, id):
-        self.threadsAndHandles = []
-        self.info = self.add_logger(log_func=logger.info, id=id)
-        self.error = self.add_logger(log_func=logger.error, id=id)
+        self.threads_and_handles = []
+        self.info = self.add_logger(log_func=LOGGER.info, id=id)
+        self.error = self.add_logger(log_func=LOGGER.error, id=id)
 
     def add_logger(self, log_func, id):
         read, write = os.pipe()
@@ -95,7 +95,7 @@ class LoggerHandle:
 
         thread = Thread(target=_thread_func)
         thread.start()
-        self.threadsAndHandles.append((thread, write))
+        self.threads_and_handles.append((thread, write))
 
         return write
 
@@ -108,13 +108,13 @@ class LoggerHandle:
         return self.LogHandles(info=self.info, error=self.error)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        for thread, handle in self.threadsAndHandles:
+        for thread, handle in self.threads_and_handles:
             os.close(handle)
             thread.join()
 
 
 def _showwarning(message, category, filename, lineno, file=None, line=None):
-    logger.warning(
+    LOGGER.warning(
         f"[{filename} {lineno}] {message}"
         if line is None
         else f"[{filename} {lineno}] {message} {line}"
@@ -138,15 +138,39 @@ class TqdmToLogger(StringIO):
         return len(self.buf)
 
     def flush(self):
-        logger.info(self.buf)
+        LOGGER.info(self.buf)
 
     def close(self):
-        logger.info("")
+        LOGGER.info("")
         super(TqdmToLogger, self).close(self)
 
 
 tqdm = partial(_tqdm, file=TqdmToLogger())
 tqdm_map = partial(_tqdm_map, file=TqdmToLogger())
+
+MOL_DATA_HEADER = (
+    "Sample Name",
+    "Molecule Length",
+    "No. Reads",
+    "MI",
+    "BX",
+    "Reference",
+    "Mean Read Depth",
+    "Mean MapQ",
+)
+HIST_DATA_HEADER = ("PDF", "CDF", "Molecule Length", "Sample Name", "Min No. Reads")
+
+
+def ReadCSV(path, header):
+    df = pd.read_csv(path)
+
+    if len(df.columns.values) == len(header) and np.all(df.columns.values == header):
+        return df
+    else:
+        LOGGER.error(
+            f"Error reading '{path}'; expected header:'{header}', got:'{df.columns.values}'"
+        )
+        return pd.DataFrame()
 
 
 class CallBack:
@@ -259,25 +283,22 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             mi: int
 
         class Molecule:
-            def __init__(self, alignment, bx, reference_name):
-                self.min = np.inf
-                self.max = 0
+            def __init__(self, alignments, bx, reference_name):
+                alignments = tuple(alignments)
 
-                self.n_reads = 0
-                self.total_read_len = 0
-                self.total_mapping_quality = 0
+                self.min = min(al.reference_start for al in alignments)
+                self.max = max(al.reference_end for al in alignments)
 
-                self.mi = alignment.mi if alignment.haveMI else None
+                self.n_reads = len(alignments)
+                self.total_read_len = sum(al.query_length for al in alignments)
+                self.total_mapping_quality = sum(
+                    al.mapping_quality for al in alignments
+                )
+
+                mi = tuple(set(al.mi if al.haveMI else None for al in alignments))
+                self.mi = mi[0] if len(mi) == 1 else None
                 self.bx = bx
                 self.ref = reference_name
-
-            def update(self, alignment):
-                self.min = min(self.min, alignment.reference_start)
-                self.max = max(self.max, alignment.reference_end)
-
-                self.n_reads += 1
-                self.total_read_len += alignment.query_length
-                self.total_mapping_quality += alignment.mapping_quality
 
             def __len__(self):
                 return max(0, self.max - self.min)
@@ -330,10 +351,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
             return (
                 genome_length,
-                {
-                    name: BasicStats(list(stats[0]), *stats[1:])
-                    for name, stats in basic_stats
-                },
+                {name: BasicStats(*stats) for name, stats in basic_stats},
                 {
                     name: {
                         ref_names[tid]: {
@@ -365,13 +383,10 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     if (b.reference_start - a.reference_end)
                     < alignment_file.cluster_threshold
                 )
-                for cc in nx.connected_components(g):
-                    cc = iter(cc)
-                    c = next(cc)
-                    m = Molecule(c, bx, reference_name)
-                    for c in chain((c,), cc):
-                        m.update(c)
-                    yield m
+                yield from (
+                    Molecule(cc, bx, reference_name)
+                    for cc in nx.connected_components(g)
+                )
 
             molecule_data = pd.DataFrame(
                 (
@@ -390,16 +405,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     for (bx, _), c in b.items()
                     for molecule in ClusterAlignments(c, bx, reference_name)
                 ),
-                columns=(
-                    "Sample Name",
-                    "Molecule Length",
-                    "No. Reads",
-                    "MI",
-                    "BX",
-                    "Reference",
-                    "Mean Read Depth",
-                    "Mean MapQ",
-                ),
+                columns=MOL_DATA_HEADER,
             )
 
             def n_stats(data, ns):
@@ -526,7 +532,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
         max_workers = max(min(threads, len(alignment_files)), 1)
         with TPE(max_workers=max_workers) as exe:
             return exe.map(
-                lambda af: GetStats(af, threads=max(threads // max_workers, 1)),
+                partial(GetStats, threads=max(threads // max_workers, 1)),
                 alignment_files,
             )
 
@@ -536,7 +542,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
         return (
             iter(
                 tqdm_map(
-                    pd.read_csv,
+                    partial(ReadCSV, header=MOL_DATA_HEADER),
                     mol_files,
                     max_workers=threads,
                     desc="Read CSVs (molecular data)",
@@ -618,7 +624,7 @@ def GetAllMolLenHists(df, hist_data, min_reads, threads):
         yield from (
             iter(
                 tqdm_map(
-                    pd.read_csv,
+                    partial(ReadCSV, header=HIST_DATA_HEADER),
                     hist_files,
                     max_workers=threads,
                     desc="Read CSVs (histogram data)",
@@ -789,11 +795,11 @@ def save_plots(prefix):
 @cli.result_callback()
 def run(callbacks, threads, min_reads):
     def Error(msg):
-        logger.error(msg)
+        LOGGER.error(msg)
         sys.exit(1)
 
-    logger.info("Starting...")
-    logger.info("")
+    LOGGER.info("Starting...")
+    LOGGER.info("")
 
     csv = tuple(cp for cp in callbacks if cp.is_CP)
     if len(csv) == 0:
@@ -833,10 +839,10 @@ def run(callbacks, threads, min_reads):
     )
 
     if summary_data.shape[0] > 0:
-        logger.info("")
+        LOGGER.info("")
         for line in str(summary_data).split("\n"):
-            logger.info(line)
-        logger.info("")
+            LOGGER.info(line)
+        LOGGER.info("")
 
     hist_data = (
         GetAllMolLenHists(
@@ -853,7 +859,7 @@ def run(callbacks, threads, min_reads):
 
     if csv:
         csv.prefix.parent.mkdir(parents=True, exist_ok=True)
-        get_path = lambda f: base_get_path(f, csv.prefix)
+        get_path = partial(base_get_path, prefix=csv.prefix)
 
         def save_csv(args):
             df, name = args
@@ -891,7 +897,7 @@ def run(callbacks, threads, min_reads):
 
     if plot:
         plot.parent.mkdir(parents=True, exist_ok=True)
-        get_path = lambda f: base_get_path(f, plot)
+        get_path = partial(base_get_path, prefix=plot)
 
         def save_plots(col, hue, n, typ):
             name = get_path(f"molecular_length_{typ}s_{n}.png")
@@ -930,12 +936,12 @@ def run(callbacks, threads, min_reads):
 
     generated = tuple(("\t" + str(n)) for n in chain.from_iterable(generated))
 
-    logger.info("")
-    logger.info("Generated files:")
+    LOGGER.info("")
+    LOGGER.info("Generated files:")
     for line in generated:
-        logger.info(line)
-    logger.info("")
-    logger.info("Done")
+        LOGGER.info(line)
+    LOGGER.info("")
+    LOGGER.info("Done")
 
 
 if __name__ == "__main__":

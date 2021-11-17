@@ -58,16 +58,8 @@ FillCBTask(void *in)
 
 	if ((readState = sam_read1(data->samFile, data->header, record)) >= 0)
 	{
-	    if (bam_get_mempolicy(record) & BAM_USER_OWNS_DATA)
-	    {
-		u32 newMData = ((u32)record->l_data + 7) & (~7U);
-
-		record->m_data = newMData;
-		bHead += newMData;
-	    }
-	    
-	    head = headPlusOne;
-	    data->buffer->head = (volatile u32)head;
+	    if (bam_get_mempolicy(record) & BAM_USER_OWNS_DATA) bHead += (record->m_data = (((u32)record->l_data + 7) & (~7U)));
+	    data->buffer->head = (volatile u32)(head = headPlusOne);
 	}
     } while (readState >= 0);
 
@@ -277,11 +269,10 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 		    if (bam_get_mempolicy(record) & BAM_USER_OWNS_DATA) cBuffer->bufferTail = (volatile u32)((u32)(record->data - cBuffer->dataBuffer) + record->m_data);
 		    else bam_destroy1(record);
 
-		    tail = (tail + 1) & (CircularBufferSize - 1);
-		    cBuffer->tail = (volatile u32)tail;
+		    cBuffer->tail = (volatile u32)(tail = ((tail + 1) & (CircularBufferSize - 1)));
 
 		    {
-#define Log2_Print_Interval 14
+			#define Log2_Print_Interval 14
 			if (!(++recordCount & ((1 << Log2_Print_Interval) - 1)))
 			{
 			    u08 currPtr = printNBufferPtr;
