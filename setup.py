@@ -20,20 +20,25 @@
 
 
 import sys
+from pathlib import Path
+from shutil import copyfile
 from subprocess import PIPE, Popen
 
 from setuptools import find_packages, setup
 from setuptools.command.install import install as setup_install
 
-VERSION = "0.0.0"
 with Popen("git describe".split(), stdout=PIPE, stderr=sys.stderr, text=True) as proc:
-    if proc.wait() == 0:
-        VERSION = next(proc.stdout).strip()
+    if proc.wait() != 0:
+        sys.exit("Could not determine version from 'git describe'")
+    VERSION = next(proc.stdout).strip().replace("-", "_")
+
 
 LINKSTATS_C = "_LinkStats_C"
 
 
 def install_linkstats_c():
+    copyfile(Path(LINKSTATS_C) / "meson.build.in", Path(LINKSTATS_C) / "meson.build")
+
     for name, cmd in (
         (
             "setting meson version",

@@ -27,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor as TPE
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
+from importlib import import_module
 from importlib.metadata import version as get_version
 from io import StringIO
 from itertools import chain, groupby, tee
@@ -42,8 +43,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm as _tqdm
 from tqdm.contrib.concurrent import thread_map as _tqdm_map
-
-from _LinkStats_C import _LinkStats
 
 mpl.use("agg")
 mpl.rc("font", **{"family": "sans", "weight": "normal", "size": 14})
@@ -63,6 +62,9 @@ DESCRIPTION = "Collect and process statistics from aligned linked-reads."
 LICENCE = (
     "Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited."
 )
+
+
+sam_parser = getattr(import_module(NAME + "._" + NAME + "_C"), "_" + NAME)
 
 
 def create_logger_handle(stream, typeid, level):
@@ -355,7 +357,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 use_mi: bool
 
             with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handles:
-                genome_length, ref_names, basic_stats, molecule_data = _LinkStats(
+                genome_length, ref_names, basic_stats, molecule_data = sam_parser(
                     _LinkStats_Params(
                         log=handles.info,
                         error=handles.error,

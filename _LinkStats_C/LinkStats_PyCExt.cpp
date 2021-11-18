@@ -21,7 +21,7 @@ SOFTWARE.
 */
 
 #define PY_SSIZE_T_CLEAN
-#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
+//#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
 #include <Python.h>
 
 #include <LinkStats.hpp>
@@ -126,6 +126,10 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     char *overrideName;
     char *fallbackName;
     u08 useMI;
+
+    memory_arena workingSet;
+    CreateMemoryArena(workingSet, MegaByte(512));
+
     {
 	PyObject *objParams;
 	static const char *kwlist[] = {"params", 0};
@@ -187,22 +191,40 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	}
 
 	if ((logFD = (s32)PyObject_AsFileDescriptor(objLogFD)) < 0) Error("_LinkStats_C Invalid logFD '%d'", logFD);
+	Py_DECREF(objLogFD);
 	if ((errorFD = (s32)PyObject_AsFileDescriptor(objErrorFD)) < 0) Error("_LinkStats_C Invalid errorFD '%d'", errorFD);
+	Py_DECREF(objErrorFD);
 
 	nThreads = (u32)PyLong_AsUnsignedLong(objNumThreads);
 	Py_DECREF(objNumThreads);
 
-	samFileName = (char *)PyUnicode_1BYTE_DATA(objSamFileName);
-	fastaRefFileName = objFastaRefFileName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objFastaRefFileName);
-	overrideName = objOverrideName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objOverrideName);
-	fallbackName = (char *)PyUnicode_1BYTE_DATA(objFallbackName);
+	{
+	    const char *tmp = (const char *)PyUnicode_1BYTE_DATA(objSamFileName);
+	    samFileName = strcpy((char *)malloc(strlen(tmp) + 1), tmp);
+	}
+	Py_DECREF(objSamFileName);
+
+	{
+	    const char *tmp = objFastaRefFileName == Py_None ? 0 : (const char *)PyUnicode_1BYTE_DATA(objFastaRefFileName);
+	    fastaRefFileName = tmp ? strcpy((char *)malloc(strlen(tmp) + 1), tmp) : 0;
+	}
+	Py_DECREF(objFastaRefFileName);
+
+	{
+	    const char *tmp = objOverrideName == Py_None ? 0 : (const char *)PyUnicode_1BYTE_DATA(objOverrideName);
+	    overrideName = tmp ? strcpy((char *)malloc(strlen(tmp) + 1), tmp) : 0;
+	}
+	Py_DECREF(objOverrideName);
+
+	{
+	    const char *tmp = (const char *)PyUnicode_1BYTE_DATA(objFallbackName);
+	    fallbackName = strcpy((char *)malloc(strlen(tmp) + 1), tmp);
+	}
+	Py_DECREF(objFallbackName);
 
 	useMI = PyObject_IsTrue(objUseMI) ? 1 : 0;
 	Py_DECREF(objUseMI);
     }
-
-    memory_arena workingSet;
-    CreateMemoryArena(workingSet, MegaByte(512));
 
     link_stats_run_args runArgs;
     runArgs.logFD = logFD;
@@ -238,6 +260,10 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	for (const auto& [id, map] : data.moleculeData) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index++, PyTuple_Pack(2, Py_BuildValue("s", id.c_str()), MoleculeMap1ToTuple(map)));
     }
 
+    free(samFileName);
+    free(fastaRefFileName);
+    free(overrideName);
+    free(fallbackName);
     FreeMemoryArena(workingSet);
     return PyTuple_Pack(4, genomeLength, refNames, basicStats, moleculeData); 
 }
