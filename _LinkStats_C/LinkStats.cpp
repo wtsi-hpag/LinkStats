@@ -330,9 +330,13 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 		    Log("");
 		}
 	    }
+
+	    ks_free(&string);
 	}
 
+	sam_hdr_destroy(header);
 	if (hts_close(samFile)) runState = 0;
+	hts_tpool_destroy(threadPool.pool);
     }
 
     if (runState)
