@@ -37,10 +37,10 @@ main(s32 numCLIArgs, const char **cliArgs)
     link_stats_run_args args;
     args.logFD = STDERR_FILENO;
     args.numThreads = 8;
-    args.samFileName = cliArgs[1];
-    args.fastaReferenceFileName = numCLIArgs > 2 ? cliArgs[2] : 0;
+    args.samFileName = PushU64String((char *)cliArgs[1], &workingSet);
+    args.fastaReferenceFileName = numCLIArgs > 2 ? PushU64String((char *)cliArgs[2], &workingSet) : 0;
     args.overrideName = 0;
-    args.fallbackName = "FallBackName";
+    args.fallbackName = PushU64String((char *)"FallBackName", &workingSet);
     args.useMI = 1;
     args.arena = &workingSet;
 
@@ -48,9 +48,11 @@ main(s32 numCLIArgs, const char **cliArgs)
     if (LinkStats(&args, data))
     {
         printf("\nGenome Length: %" PRIu64 "\n\n", data.genomeLength);
-        for (const auto& [id, stats] : data.basicStats)
+        auto **nodes = WavlTreeGetNodes(data.basicStats, &workingSet);
+        for (u64 i = 0; i < data.basicStats->size; ++i)
         {
-            printf("%s:\n", id.c_str());
+            basic_stats *stats = nodes[i]->value;
+            printf("%s:\n", charU64String(nodes[i]->key));
             printf("\t%" PRIu64 " inserts\n", stats->insertSizes.count);
             printf("\t%" PRIu64 " total read length\n", stats->totalReadLength);
             printf("\t%" PRIu64 " alignments\n", stats->totalAlignments);
@@ -60,7 +62,7 @@ main(s32 numCLIArgs, const char **cliArgs)
             printf("\t%" PRIu64 " no BX\n", stats->totalNoBX);
             printf("\t%" PRIu64 " no MI\n", stats->totalNoMI);
             printf("\t%" PRIu64 " 0 mapq\n", stats->totalZeroMQ);
-            printf("\n");
+            printf("\n");    
         }
 
         exitCode = EXIT_SUCCESS;

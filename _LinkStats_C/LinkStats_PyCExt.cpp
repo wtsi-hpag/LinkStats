@@ -65,7 +65,7 @@ BasicStatsToTuple (basic_stats *stats)
 
 static
 PyObject *
-MoleculeAlignmentsToTuple (const ll *list)
+MoleculeAlignmentsToTuple (ll *list)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
     {
@@ -81,24 +81,24 @@ MoleculeAlignmentsToTuple (const ll *list)
 
 static
 PyObject *
-MoleculeMap2ToTuple (const std::map<std::pair<std::string, s32>, ll *> &map2)
+MoleculeMap2ToTuple (wavl_tree<u64_string, ll> *map2, memory_arena *arena)
 {
-    PyObject *tuple = PyTuple_New((Py_ssize_t)map2.size());
+    PyObject *tuple = PyTuple_New((Py_ssize_t)map2->size);
     {
-	u32 index = 0;
-	for (const auto& [bxmi, list] : map2) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index++, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", bxmi.first.c_str()), PyLong_FromLong(bxmi.second)), MoleculeAlignmentsToTuple(list)));
+	auto **nodes = WavlTreeGetNodes(map2, arena);
+	ForLoop64(map2->size) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), PyLong_FromLong(nodes[index]->key->id)), MoleculeAlignmentsToTuple(nodes[index]->value)));
     }
     return tuple;
 }
 
 static
 PyObject *
-MoleculeMap1ToTuple (const std::map<s32, std::map<std::pair<std::string, s32>, ll *>> &map1)
+MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll>> *map1, memory_arena *arena)
 {
-    PyObject *tuple = PyTuple_New((Py_ssize_t)map1.size());
+    PyObject *tuple = PyTuple_New((Py_ssize_t)map1->size);
     {
-	u32 index = 0;
-	for (const auto& [tid, map2] : map1) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index++, PyTuple_Pack(2, PyLong_FromLong(tid), MoleculeMap2ToTuple(map2)));
+	auto **nodes = WavlTreeGetNodes(map1, arena);
+	ForLoop64(map1->size) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(nodes[index]->key)), MoleculeMap2ToTuple(nodes[index]->value, arena)));
     }
     return tuple;
 }
@@ -121,10 +121,10 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 
     s32 logFD;
     u32 nThreads;
-    char *samFileName;
-    char *fastaRefFileName;
-    char *overrideName;
-    char *fallbackName;
+    u64_string *samFileName;
+    u64_string *fastaRefFileName;
+    u64_string *overrideName;
+    u64_string *fallbackName;
     u08 useMI;
 
     memory_arena workingSet;
@@ -198,28 +198,16 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	nThreads = (u32)PyLong_AsUnsignedLong(objNumThreads);
 	Py_DECREF(objNumThreads);
 
-	{
-	    const char *tmp = (const char *)PyUnicode_1BYTE_DATA(objSamFileName);
-	    samFileName = strcpy((char *)malloc(strlen(tmp) + 1), tmp);
-	}
+	samFileName = PushU64String((char *)PyUnicode_1BYTE_DATA(objSamFileName), &workingSet);
 	Py_DECREF(objSamFileName);
 
-	{
-	    const char *tmp = objFastaRefFileName == Py_None ? 0 : (const char *)PyUnicode_1BYTE_DATA(objFastaRefFileName);
-	    fastaRefFileName = tmp ? strcpy((char *)malloc(strlen(tmp) + 1), tmp) : 0;
-	}
+	fastaRefFileName = PushU64String(objFastaRefFileName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objFastaRefFileName), &workingSet);
 	Py_DECREF(objFastaRefFileName);
 
-	{
-	    const char *tmp = objOverrideName == Py_None ? 0 : (const char *)PyUnicode_1BYTE_DATA(objOverrideName);
-	    overrideName = tmp ? strcpy((char *)malloc(strlen(tmp) + 1), tmp) : 0;
-	}
+	overrideName = PushU64String(objOverrideName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objOverrideName), &workingSet);
 	Py_DECREF(objOverrideName);
 
-	{
-	    const char *tmp = (const char *)PyUnicode_1BYTE_DATA(objFallbackName);
-	    fallbackName = strcpy((char *)malloc(strlen(tmp) + 1), tmp);
-	}
+	fallbackName = PushU64String((char *)PyUnicode_1BYTE_DATA(objFallbackName), &workingSet);
 	Py_DECREF(objFallbackName);
 
 	useMI = PyObject_IsTrue(objUseMI) ? 1 : 0;
@@ -245,25 +233,24 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 
     PyObject *genomeLength = PyLong_FromUnsignedLongLong(data.genomeLength);
     
-    PyObject *refNames = PyTuple_New((Py_ssize_t)data.refNames.size());
-    ForLoop((u32)data.refNames.size()) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, Py_BuildValue("s", data.refNames[index].c_str()));
-
-    PyObject *basicStats = PyTuple_New((Py_ssize_t)data.basicStats.size());
+    PyObject *refNames = PyTuple_New((Py_ssize_t)data.refNames->count);
     {
 	u32 index = 0;
-	for (const auto& [id, stats] : data.basicStats) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index++, PyTuple_Pack(2, Py_BuildValue("s", id.c_str()), BasicStatsToTuple(stats)));
+	TraverseLinkedList(data.refNames->head, ll_node) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index++, Py_BuildValue("s", (const char *)charU64String((u64_string *)node->ptr)));
     }
-
-    PyObject *moleculeData = PyTuple_New((Py_ssize_t)data.moleculeData.size());
+    
+    PyObject *basicStats = PyTuple_New((Py_ssize_t)data.basicStats->size);
     {
-	u32 index = 0;
-	for (const auto& [id, map] : data.moleculeData) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index++, PyTuple_Pack(2, Py_BuildValue("s", id.c_str()), MoleculeMap1ToTuple(map)));
+	auto **nodes = WavlTreeGetNodes(data.basicStats, &workingSet);
+	ForLoop64(data.basicStats->size) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), BasicStatsToTuple(nodes[index]->value)));
+    }
+    
+    PyObject *moleculeData = PyTuple_New((Py_ssize_t)data.moleculeData->size);
+    {
+	auto **nodes = WavlTreeGetNodes(data.moleculeData, &workingSet);
+	ForLoop64(data.moleculeData->size) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), MoleculeMap1ToTuple(nodes[index]->value, &workingSet)));
     }
 
-    free(samFileName);
-    free(fastaRefFileName);
-    free(overrideName);
-    free(fallbackName);
     FreeMemoryArena(workingSet);
     return PyTuple_Pack(4, genomeLength, refNames, basicStats, moleculeData); 
 }

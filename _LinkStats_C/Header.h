@@ -53,10 +53,7 @@ SOFTWARE.
 #endif
 
 #include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-//#include <math.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -355,9 +352,8 @@ FreeMemoryArena_(memory_arena *arena)
    }
 }
 
-global_function
 void *
-PushSize_(memory_arena *arena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
+PushSize_(memory_arena *arena, u64 size, u32 alignment_pow2)
 {
    if (!arena->active && arena->next && arena->next->base && !arena->next->currentSize)
    {
@@ -444,11 +440,6 @@ FreeLastPush_(memory_arena *arena)
       arena->currentSize -= (sizeToRemove + sizeof(u64));
    }
 }
-
-#define PushStruct(arena, type, ...) (type *)PushSize_(&arena, sizeof(type), ##__VA_ARGS__)
-#define PushArray(arena, type, n, ...) (type *)PushSize_(&arena, sizeof(type) * n, ##__VA_ARGS__)
-#define PushStructP(arena, type, ...) (type *)PushSize_(arena, sizeof(type), ##__VA_ARGS__)
-#define PushArrayP(arena, type, n, ...) (type *)PushSize_(arena, sizeof(type) * n, ##__VA_ARGS__)
 
 #define FreeLastPush(arena) FreeLastPush_(&arena)
 #define FreeLastPushP(arena) FreeLastPush_(arena)

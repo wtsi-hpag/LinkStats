@@ -104,11 +104,7 @@ PassFilter(bam1_t *record, u16 flags)
     ll_node *newNode = PushStructP(arena, ll_node); \
     newNode->id = data; \
     newNode->next = 0; \
-    \
-    if (!list->head) list->head = newNode; \
-    else list->tail->next = newNode; \
-    list->tail = newNode; \
-    \
+    list->tail = (list->tail->next = newNode); \
     ++list->count; \
 }\
 
@@ -120,7 +116,17 @@ basic_stats *
 NewBasicStats(memory_arena *arena)
 {
     basic_stats *stats = PushStructP(arena, basic_stats);
-    memset(stats, 0, sizeof(basic_stats));
+    stats->insertSizes.count = 0;
+    stats->insertSizes.head = 0;
+    stats->insertSizes.tail = (ll_node *)&stats->insertSizes;
+    stats->totalReadLength = 0;
+    stats->totalAlignments = 0;
+    stats->totalDup = 0;
+    stats->totalQCF = 0;
+    stats->totalUnM = 0;
+    stats->totalNoMI = 0;
+    stats->totalNoBX = 0;
+    stats->totalZeroMQ = 0;
     return stats;
 }
 
@@ -129,7 +135,9 @@ ll *
 NewLL(memory_arena *arena)
 {
     ll *list = PushStructP(arena, ll);
-    memset(list, 0, sizeof(ll));
+    list->count = 0;
+    list->head = 0;
+    list->tail = (ll_node *)list;
     return list;
 }
 
@@ -149,6 +157,126 @@ NewAlignment(bam1_t *record, s32 *mi, memory_arena *arena)
     return al;
 }
 
+bool
+operator
+<(u64_string const& lhs, u64_string const& rhs)
+{
+    if (lhs.id < rhs.id) return true;
+    else if (lhs.id > rhs.id) return false;
+    else
+    {
+	u64 *data1 = (u64 *)&lhs.string;
+	u64 *data2 = (u64 *)&rhs.string;
+	ForLoop(Min(lhs.length, rhs.length))
+	{
+	    if (data1[index] < data2[index]) return true;
+	    else if (data1[index] > data2[index]) return false;
+	}
+	if (lhs.length < rhs.length) return true;
+	else return false;
+    }
+}
+
+bool
+operator
+==(u64_string const& lhs, u64_string const& rhs)
+{
+    if (lhs.id != rhs.id) return false;
+    else if (lhs.length != rhs.length) return false;
+    else
+    {
+	u64 *data1 = (u64 *)&lhs.string;
+	u64 *data2 = (u64 *)&rhs.string;
+	ForLoop(lhs.length) if (data1[index] != data2[index]) return false;
+	return true;
+    }
+}
+
+u64_string *
+PushU64String(char *charString, memory_arena *arena, s32 id)
+{
+    if (!charString) return 0;
+
+    u32 len = (((u32)strlen(charString)) >> 3) + 1;
+    u64 *stringData = PushArrayP(arena, u64, len + 1);
+    stringData[len] = 0;
+    strcpy((char *)(stringData + 1), (const char *)charString);
+    
+    ((u32 *)stringData)[1] = len;
+    ((s32 *)stringData)[0] = id;
+
+    return (u64_string *)stringData;
+}
+
+char *
+charU64String(u64_string *string)
+{
+    return (char *)&string->string;
+}
+
+void
+MakeCopy(memory_arena *arena, u64_string *string, u64_string **out)
+{
+   *out = string;
+}
+
+bool
+operator
+<(char_string const& lhs, char_string const& rhs)
+{
+    if (lhs.id < rhs.id) return true;
+    else if (lhs.id > rhs.id) return false;
+    else return strcmp((const char *)lhs.string, (const char *)rhs.string) < 0;
+}
+
+bool
+operator
+==(char_string const& lhs, char_string const& rhs)
+{
+    if (lhs.id != rhs.id) return false;
+    else return !strcmp((const char *)lhs.string, (const char *)rhs.string);
+}
+
+void
+MakeCopy(memory_arena *arena, char_string *string, char_string **out)
+{
+    char_string *result = PushStructP(arena, char_string);
+    result->string = strcpy(PushArrayP(arena, char, strlen((const char *)string->string) + 1), (const char *)string->string);
+    result->id = string->id;
+    *out = result;
+}
+
+bool
+operator
+<(char_string const& lhs, u64_string const& rhs)
+{
+    if (lhs.id < rhs.id) return true;
+    else if (lhs.id > rhs.id) return false;
+    else return strcmp((const char *)lhs.string, (const char *)charU64String((u64_string *)&rhs)) < 0;
+}
+
+bool
+operator
+==(char_string const& lhs, u64_string const& rhs)
+{
+    if (lhs.id != rhs.id) return false;
+    else return !strcmp((const char *)lhs.string, (const char *)charU64String((u64_string *)&rhs));
+}
+
+void
+MakeCopy(memory_arena *arena, char_string *string, u64_string **out)
+{
+    *out = PushU64String(string->string, arena, string->id);
+}
+
+void
+MakeCopy(memory_arena *arena, s32 *tid, s32 **out)
+{
+    s32 *tmp = PushArrayP(arena, s32, 1);
+    tmp[0] = *tid;
+    *out = tmp;
+}
+
 u08
 LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 {
@@ -158,10 +286,10 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
     s32 logFd = args->logFD;
     u32 numThreads = Max(args->numThreads, 3);
     u08 useMI = args->useMI;
-    const char *overrideName = args->overrideName;
-    const char *fallbackName = args->fallbackName;
-    const char *fastaReferenceFileName = args->fastaReferenceFileName;
-    const char *samFileName = args->samFileName;
+    u64_string *overrideName = args->overrideName;
+    u64_string *fallbackName = args->fallbackName;
+    u64_string *fastaReferenceFileName = args->fastaReferenceFileName;
+    u64_string *samFileName = args->samFileName;
     memory_arena *workingSet = args->arena;
 
     #define Log(message, ...) \
@@ -172,25 +300,31 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 	write(logFd, "\n", 1); \
     } while (0)
 
-    std::map<std::string, std::string> idLookup;
-    std::map<std::string, basic_stats *> basicStats;
-    std::map<std::string, std::map<s32, std::map<std::pair<std::string, s32>, ll *>>> moleculeData;
+    wavl_tree<u64_string, u64_string> *idLookup;
+    InitialiseWavlTree(workingSet, &idLookup);
+    
+    wavl_tree<u64_string, basic_stats> *basicStats; 
+    InitialiseWavlTree(workingSet, &basicStats);
+
+    wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll>>> *moleculeData;
+    InitialiseWavlTree(workingSet, &moleculeData);
+
     u64 genomeLength = 0;
-    std::vector<std::string> refNames;
+    ll *refNames = NewLL(workingSet); 
 
     htsThreadPool threadPool = {0, (s32)(numThreads - 2)};
     htsFile *samFile;
     sam_hdr_t *header;
     if (    (threadPool.pool = hts_tpool_init(numThreads)) &&
-	    (samFile = hts_open(samFileName, "r")) && 
+	    (samFile = hts_open(charU64String(samFileName), "r")) && 
 	    !hts_set_opt(samFile, HTS_OPT_THREAD_POOL, &threadPool) && 
-	    (!fastaReferenceFileName || !hts_set_opt(samFile, CRAM_OPT_REFERENCE, fastaReferenceFileName)) &&
+	    (!fastaReferenceFileName || !hts_set_opt(samFile, CRAM_OPT_REFERENCE, charU64String(fastaReferenceFileName))) &&
 	    (header = sam_hdr_read(samFile)))
     {
 	ForLoop((u32)header->n_targets) 
 	{
 	    genomeLength += (u64)sam_hdr_tid2len(header, (s32)index);
-	    refNames.push_back(sam_hdr_tid2name(header, (s32)index));
+	    LLAddValue(refNames, PushU64String((char *)sam_hdr_tid2name(header, (s32)index), workingSet), workingSet);
 	}
 	
 	circular_buffer *cBuffer = PushStructP(workingSet, circular_buffer);
@@ -220,26 +354,30 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 
 		    if (!PassFilter(record, BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
 		    {
-			char *id;
-			if (!(id = (char *)overrideName))
+			u64_string *id;
+			if (!(id = overrideName))
 			{
 			    char *tag;
 			    u08 *tagData;
 			    if ((tagData = bam_aux_get(record, "RG")) && (tag = bam_aux2Z(tagData)))
 			    {
-				if (idLookup.find(tag) == idLookup.end())
+				char_string sTag(tag);
+				auto *node = WavlTreeInsertValue(workingSet, idLookup, &sTag);
+				if (!node->value)
 				{
-				    if (!sam_hdr_find_tag_id(header, "RG", "ID", tag, "SM", &string)) id = string.s;
-				    else id = tag;
-				    idLookup[tag] = id;
+				    char *tmp;
+				    if (!sam_hdr_find_tag_id(header, "RG", "ID", tag, "SM", &string)) tmp = string.s;
+				    else tmp = tag;
+				    node->value = id = PushU64String(tmp, workingSet);
 				}
-				else id = (char *)idLookup[tag].c_str();
+				else id = node->value;
 			    }
-			    else id = (char *)fallbackName;
+			    else id = fallbackName;
 			}
 
 			basic_stats *stats;
-			if (!(stats = basicStats[id])) basicStats[id] = stats = NewBasicStats(workingSet);
+			auto *node = WavlTreeInsertValue(workingSet, basicStats, id);
+			if (!(stats = node->value)) node->value = stats = NewBasicStats(workingSet);
 
 			{
 			    s64 insertSize;
@@ -278,10 +416,15 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 			    if (record->core.qual && bx && (useMI ? mi : (s32 *)1))
 			    {
 				alignment *al = NewAlignment(record, mi, workingSet);
-				std::pair<std::string, s32> bxmi = std::make_pair(bx, useMI ? *mi : 0);
-
 				ll *list;
-				if (!(list = moleculeData[id][record->core.tid][bxmi])) moleculeData[id][record->core.tid][bxmi] = list = NewLL(workingSet);
+				
+				auto *node1 = WavlTreeInsertValue(workingSet, moleculeData, id);
+				if (!node1->value) InitialiseWavlTree(workingSet, &node1->value); 
+				auto *node2 = WavlTreeInsertValue(workingSet, node1->value, &record->core.tid);
+				if (!node2->value) InitialiseWavlTree(workingSet, &node2->value);
+				char_string bxmi(bx, useMI ? *mi : 0);
+				auto *node3 = WavlTreeInsertValue(workingSet, node2->value, &bxmi);
+				if (!(list = node3->value)) node3->value = list = NewLL(workingSet);
 
 				LLAddValue(list, al, workingSet);
 			    }
@@ -315,9 +458,11 @@ LinkStats(link_stats_run_args *args, link_stats_return_data &returnData)
 
 	    {
 		Log("\nGenome Length: %" PRIu64 "\n", genomeLength);
-		for (const auto& [id, stats] : basicStats)
+		auto **nodes = WavlTreeGetNodes(basicStats, workingSet);
+		ForLoop64(basicStats->size)
 		{
-		    Log("%s:", id.c_str());
+		    basic_stats *stats = nodes[index]->value;
+		    Log("%s:", charU64String(nodes[index]->key));
 		    Log("\t%" PRIu64 " inserts", stats->insertSizes.count);
 		    Log("\t%" PRIu64 " total read length", stats->totalReadLength);
 		    Log("\t%" PRIu64 " alignments", stats->totalAlignments);
