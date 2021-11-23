@@ -21,8 +21,10 @@ SOFTWARE.
 */
 
 #include "LinkStats.hpp"
-#include <unistd.h>
+
+#include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 s32
 main(s32 numCLIArgs, const char **cliArgs)
@@ -45,14 +47,13 @@ main(s32 numCLIArgs, const char **cliArgs)
     args.arena = &workingSet;
 
     link_stats_return_data data;
-    if (LinkStats(&args, data))
+    if (LinkStats(&args, &data))
     {
         printf("\nGenome Length: %" PRIu64 "\n\n", data.genomeLength);
-        auto **nodes = WavlTreeGetNodes(data.basicStats, &workingSet);
-        for (u64 i = 0; i < data.basicStats->size; ++i)
+        TraverseLinkedList(WavlTreeFreezeToLL(data.basicStats))
         {
-            basic_stats *stats = nodes[i]->value;
-            printf("%s:\n", charU64String(nodes[i]->key));
+            basic_stats *stats = node->value;
+            printf("%s:\n", charU64String(node->key));
             printf("\t%" PRIu64 " inserts\n", stats->insertSizes.count);
             printf("\t%" PRIu64 " total read length\n", stats->totalReadLength);
             printf("\t%" PRIu64 " alignments\n", stats->totalAlignments);

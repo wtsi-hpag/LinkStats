@@ -21,7 +21,6 @@ SOFTWARE.
 */
 
 #define PY_SSIZE_T_CLEAN
-//#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
 #include <Python.h>
 
 #include <LinkStats.hpp>
@@ -39,16 +38,6 @@ SOFTWARE.
 #include "stb_sprintf.h"
 #pragma clang diagnostic pop
 
-#define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
-#define ForLoop(n) for (u32 index = 0; index < (n); ++index)
-#define ForLoop64(n) for (u64 index = 0; index < (n); ++index)
-#define ForLoop2(n) for (u32 index2 = 0; index2 < (n); ++index2)
-#define ForLoop3(n) for (u32 index3 = 0; index3 < (n); ++index3)
-#define ForLoopN(i, n) for (u32 i = 0; i < (n); ++i)
-#define TraverseLinkedList(startNode, type) for (type *(node) = (startNode); node; node = node->next)
-#define TraverseLinkedList2(startNode, type) for (type *(node2) = (startNode); node2; node2 = node2->next)
-#define TraverseLinkedList3(startNode, type) for (type *(node3) = (startNode); node3; node3 = node3->next)
-
 #define ModuleName "_LinkStats"
 #define ModuleDescription "LinkStats C Ext"
 
@@ -57,49 +46,38 @@ PyObject *
 BasicStatsToTuple (basic_stats *stats)
 {
     PyObject *insertSizes = PyTuple_New((Py_ssize_t)stats->insertSizes.count);
-    u32 index = 0;
-    TraverseLinkedList(stats->insertSizes.head, ll_node) PyTuple_SET_ITEM(insertSizes, (Py_ssize_t)index++, PyLong_FromUnsignedLongLong(node->value));
+    TraverseLinkedList(stats->insertSizes.head) PyTuple_SET_ITEM(insertSizes, (Py_ssize_t)index, PyLong_FromUnsignedLongLong(node->data));
 
     return PyTuple_Pack(9, insertSizes, PyLong_FromUnsignedLongLong(stats->totalReadLength), PyLong_FromUnsignedLongLong(stats->totalAlignments), PyLong_FromUnsignedLongLong(stats->totalDup), PyLong_FromUnsignedLongLong(stats->totalQCF), PyLong_FromUnsignedLongLong(stats->totalUnM), PyLong_FromUnsignedLongLong(stats->totalNoMI), PyLong_FromUnsignedLongLong(stats->totalNoBX), PyLong_FromUnsignedLongLong(stats->totalZeroMQ));
 }
 
 static
 PyObject *
-MoleculeAlignmentsToTuple (ll *list)
+MoleculeAlignmentsToTuple (ll<alignment *> *list)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
-    {
-	u32 index = 0;
-	TraverseLinkedList(list->head, ll_node)
-	{
-	    alignment *al = (alignment *)node->ptr;
-	    PyTuple_SET_ITEM(tuple, (Py_ssize_t)index++, PyTuple_Pack(6, PyBool_FromLong((s32)al->haveMI), PyLong_FromLong(al->qual), PyLong_FromUnsignedLongLong(al->referenceStart), PyLong_FromUnsignedLongLong(al->referenceEnd), PyLong_FromUnsignedLongLong(al->queryLength), PyLong_FromLong(al->mi)));
-	}
-    }
+    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(6, PyBool_FromLong((s32)node->data->haveMI), PyLong_FromLong(node->data->qual), PyLong_FromUnsignedLongLong(node->data->referenceStart), PyLong_FromUnsignedLongLong(node->data->referenceEnd), PyLong_FromUnsignedLongLong(node->data->queryLength), PyLong_FromLong(node->data->mi)));
+
     return tuple;
 }
 
 static
 PyObject *
-MoleculeMap2ToTuple (wavl_tree<u64_string, ll> *map2, memory_arena *arena)
+MoleculeMap2ToTuple (wavl_tree<u64_string, ll<alignment *>> *map2, memory_arena *arena)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map2->size);
-    {
-	auto **nodes = WavlTreeGetNodes(map2, arena);
-	ForLoop64(map2->size) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), PyLong_FromLong(nodes[index]->key->id)), MoleculeAlignmentsToTuple(nodes[index]->value)));
-    }
+    TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeAlignmentsToTuple(node->value)));
+    
     return tuple;
 }
 
 static
 PyObject *
-MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll>> *map1, memory_arena *arena)
+MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>> *map1, memory_arena *arena)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map1->size);
-    {
-	auto **nodes = WavlTreeGetNodes(map1, arena);
-	ForLoop64(map1->size) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(nodes[index]->key)), MoleculeMap2ToTuple(nodes[index]->value, arena)));
-    }
+    TraverseLinkedList(WavlTreeFreezeToLL(map1)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(node->key)), MoleculeMap2ToTuple(node->value, arena)));
+
     return tuple;
 }
 
@@ -113,8 +91,8 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     do \
     { \
 	u64 n = (u64)stbsp_snprintf(ErrorBuffer, sizeof(ErrorBuffer), message, ##__VA_ARGS__); \
-	write(errorFD, ErrorBuffer, n); \
-	write(errorFD, "\n", 1); \
+	(void)write(errorFD, ErrorBuffer, n); \
+	(void)write(errorFD, "\n", 1); \
 	PyErr_SetString(PyExc_Exception, ErrorBuffer); \
 	return 0;\
     } while (0)
@@ -227,7 +205,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     link_stats_return_data data;
     u08 runState;
     Py_BEGIN_ALLOW_THREADS;
-    runState = LinkStats(&runArgs, data);
+    runState = LinkStats(&runArgs, &data);
     Py_END_ALLOW_THREADS;
     if (!runState) Error("_LinkStats_C Run Error");
 
@@ -235,20 +213,17 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     
     PyObject *refNames = PyTuple_New((Py_ssize_t)data.refNames->count);
     {
-	u32 index = 0;
-	TraverseLinkedList(data.refNames->head, ll_node) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index++, Py_BuildValue("s", (const char *)charU64String((u64_string *)node->ptr)));
+	TraverseLinkedList(data.refNames->head) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, Py_BuildValue("s", (const char *)charU64String(node->data)));
     }
     
     PyObject *basicStats = PyTuple_New((Py_ssize_t)data.basicStats->size);
     {
-	auto **nodes = WavlTreeGetNodes(data.basicStats, &workingSet);
-	ForLoop64(data.basicStats->size) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), BasicStatsToTuple(nodes[index]->value)));
+	TraverseLinkedList(WavlTreeFreezeToLL(data.basicStats)) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), BasicStatsToTuple(node->value)));
     }
     
     PyObject *moleculeData = PyTuple_New((Py_ssize_t)data.moleculeData->size);
     {
-	auto **nodes = WavlTreeGetNodes(data.moleculeData, &workingSet);
-	ForLoop64(data.moleculeData->size) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(nodes[index]->key)), MoleculeMap1ToTuple(nodes[index]->value, &workingSet)));
+	TraverseLinkedList(WavlTreeFreezeToLL(data.moleculeData)) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), MoleculeMap1ToTuple(node->value, &workingSet)));
     }
 
     FreeMemoryArena(workingSet);

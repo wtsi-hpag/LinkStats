@@ -22,56 +22,33 @@ SOFTWARE.
 
 #pragma once
 
-#include "base.hpp"
-#include "memory.hpp"
-#include "util.hpp"
+#include <inttypes.h>
 
-struct
-basic_stats
-{
-    ll<u64> insertSizes;
-    u64 totalReadLength;
-    u64 totalAlignments;
-    u64 totalDup;
-    u64 totalQCF;
-    u64 totalUnM;
-    u64 totalNoMI;
-    u64 totalNoBX;
-    u64 totalZeroMQ;
-};
+typedef int8_t s08;
+typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
 
-struct
-alignment
-{
-    u32 haveMI : 1;
-    u32 qual : 31;
-    u64 referenceStart;
-    u64 referenceEnd;
-    u64 queryLength;
-    s32 mi;
-};
+typedef uint8_t u08;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
 
-struct
-link_stats_run_args
-{
-    s32 logFD;
-    u32 numThreads;
-    u64_string *samFileName;
-    u64_string *fastaReferenceFileName;
-    u64_string *overrideName;
-    u64_string *fallbackName;
-    memory_arena *arena;
-    u08 useMI : 1;
-};
+typedef float f32;
+typedef double f64;
 
-struct
-link_stats_return_data
-{
-    u64 genomeLength;
-    ll<u64_string *> *refNames;
-    wavl_tree<u64_string, basic_stats> *basicStats;
-    wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>>> *moleculeData;
-};
+#define KiloByte(x) (1024*x)
+#define MegaByte(x) (1024*KiloByte(x))
+#define GigaByte(x) (1024*MegaByte(x))
 
-u08 LinkStats(link_stats_run_args *args, link_stats_return_data *data);
+#define global_function static
+#define global_variable static
 
+#define Min(x, y) ((x) < (y) ? (x) : (y))
+#define Max(x, y) ((x) > (y) ? (x) : (y))
+
+#define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
+#define ForLoop(n) for (u32 index = 0; index < (n); ++index)
+#define TraverseLinkedList(startNode) u32 index = 0; for (auto *node = (startNode); node; node = node->next, ++index)
+
+#define Pow2(N) (1 << N)

@@ -30,8 +30,9 @@ version : '0.0.0'
 
 name = meson.project_name()
 
-lib_src = name + '.cpp'
-lib_header = name + '.hpp'
+lib_src = [ name + '.cpp',
+            'memory.cpp',
+            'util.cpp']
 
 test_src = 'test.cpp'
 test_file = 'test.bam'
