@@ -73,5 +73,5 @@ link_stats_return_data
     wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>>> *moleculeData;
 };
 
-u08 LinkStats(link_stats_run_args *args, link_stats_return_data *data);
+link_stats_return_data *LinkStats(link_stats_run_args *args);
 

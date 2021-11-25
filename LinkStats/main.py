@@ -345,29 +345,16 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             total_zeromq: int
 
         def ReadSAM(alignment_file, threads):
-            @dataclass
-            class _LinkStats_Params:
-                log: int
-                error: int
-                num_threads: int
-                sam_file_name: str
-                fasta_file_name: str
-                override_name: str
-                fallback_name: str
-                use_mi: bool
-
             with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handles:
                 genome_length, ref_names, basic_stats, molecule_data = sam_parser(
-                    _LinkStats_Params(
-                        log=handles.info,
-                        error=handles.error,
-                        num_threads=threads,
-                        sam_file_name=str(alignment_file.file),
-                        fasta_file_name=alignment_file.ref,
-                        override_name=alignment_file.name,
-                        fallback_name=alignment_file.stem_name,
-                        use_mi=alignment_file.use_mi_tags,
-                    )
+                    log=handles.info,
+                    error=handles.error,
+                    num_threads=threads,
+                    sam_file_name=str(alignment_file.file),
+                    fasta_file_name=alignment_file.ref,
+                    override_name=alignment_file.name,
+                    fallback_name=alignment_file.stem_name,
+                    use_mi=alignment_file.use_mi_tags,
                 )
 
             return (

@@ -63,7 +63,7 @@ MoleculeAlignmentsToTuple (ll<alignment *> *list)
 
 static
 PyObject *
-MoleculeMap2ToTuple (wavl_tree<u64_string, ll<alignment *>> *map2, memory_arena *arena)
+MoleculeMap2ToTuple (wavl_tree<u64_string, ll<alignment *>> *map2)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map2->size);
     TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeAlignmentsToTuple(node->value)));
@@ -73,10 +73,10 @@ MoleculeMap2ToTuple (wavl_tree<u64_string, ll<alignment *>> *map2, memory_arena 
 
 static
 PyObject *
-MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>> *map1, memory_arena *arena)
+MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>> *map1)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map1->size);
-    TraverseLinkedList(WavlTreeFreezeToLL(map1)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(node->key)), MoleculeMap2ToTuple(node->value, arena)));
+    TraverseLinkedList(WavlTreeFreezeToLL(map1)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(node->key)), MoleculeMap2ToTuple(node->value)));
 
     return tuple;
 }
@@ -97,133 +97,85 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	return 0;\
     } while (0)
 
-    s32 logFD;
-    u32 nThreads;
-    u64_string *samFileName;
-    u64_string *fastaRefFileName;
-    u64_string *overrideName;
-    u64_string *fallbackName;
-    u08 useMI;
-
     memory_arena workingSet;
-    CreateMemoryArena(workingSet, MegaByte(512));
-
-    {
-	PyObject *objParams;
-	static const char *kwlist[] = {"params", 0};
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char **)kwlist, &objParams)) Error("_LinkStats_C No input 'params'");
-
-	PyObject *objErrorFD, *objLogFD, *objNumThreads, *objSamFileName, *objFastaRefFileName, *objOverrideName, *objFallbackName, *objUseMI;
-
-	{
-	    struct
-		inputParam
-		{
-		    PyObject **obj;
-		    char *name;
-		};
-
-	    inputParam params[] = {
-		{
-		    &objLogFD,
-		    (char *)"log"
-		},
-		{
-		    &objErrorFD,
-		    (char *)"error"
-		},
-		{
-		    &objNumThreads,
-		    (char *)"num_threads"
-		},
-		{
-		    &objSamFileName,
-		    (char *)"sam_file_name"
-		},
-		{
-		    &objFastaRefFileName,
-		    (char *)"fasta_file_name"
-		},
-		{
-		    &objOverrideName,
-		    (char *)"override_name"
-		},
-		{
-		    &objFallbackName,
-		    (char *)"fallback_name"
-		},
-		{
-		    &objUseMI,
-		    (char *)"use_mi"
-		}
-	    };
-
-	    ForLoop(ArrayCount(params))
-	    {
-		inputParam *param = params + index;
-		PyObject *objName = Py_BuildValue("s", param->name);
-		*(param->obj) = PyObject_GetAttr(objParams, objName);
-		Py_DECREF(objName);
-		if (!(*(param->obj))) Error("_LinkStats_C No parm %s", param->name);
-	    }
-	}
-
-	if ((logFD = (s32)PyObject_AsFileDescriptor(objLogFD)) < 0) Error("_LinkStats_C Invalid logFD '%d'", logFD);
-	Py_DECREF(objLogFD);
-	if ((errorFD = (s32)PyObject_AsFileDescriptor(objErrorFD)) < 0) Error("_LinkStats_C Invalid errorFD '%d'", errorFD);
-	Py_DECREF(objErrorFD);
-
-	nThreads = (u32)PyLong_AsUnsignedLong(objNumThreads);
-	Py_DECREF(objNumThreads);
-
-	samFileName = PushU64String((char *)PyUnicode_1BYTE_DATA(objSamFileName), &workingSet);
-	Py_DECREF(objSamFileName);
-
-	fastaRefFileName = PushU64String(objFastaRefFileName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objFastaRefFileName), &workingSet);
-	Py_DECREF(objFastaRefFileName);
-
-	overrideName = PushU64String(objOverrideName == Py_None ? 0 : (char *)PyUnicode_1BYTE_DATA(objOverrideName), &workingSet);
-	Py_DECREF(objOverrideName);
-
-	fallbackName = PushU64String((char *)PyUnicode_1BYTE_DATA(objFallbackName), &workingSet);
-	Py_DECREF(objFallbackName);
-
-	useMI = PyObject_IsTrue(objUseMI) ? 1 : 0;
-	Py_DECREF(objUseMI);
-    }
-
     link_stats_run_args runArgs;
-    runArgs.logFD = logFD;
-    runArgs.numThreads = nThreads;
-    runArgs.samFileName = samFileName;
-    runArgs.fastaReferenceFileName = fastaRefFileName;
-    runArgs.overrideName = overrideName;
-    runArgs.fallbackName = fallbackName;
-    runArgs.useMI = useMI;
-    runArgs.arena = &workingSet;
+    {
+	s32 logFD = -1;
+	s32 nThreads = 1;
+	char *samFileName = 0;
+	char *fastaRefFileName = 0;
+	char *overrideName = 0;
+	char *fallbackName = 0;
+	s32 useMI = 0;
+	
+	static const char *kwlist[] = {	"log",
+					"error",
+					"num_threads",
+					"sam_file_name",
+					"fasta_file_name",
+					"override_name",
+					"fallback_name",
+					"use_mi",
+					0};
+	
+	auto GetFD = (s32 (*)(PyObject *, void *))([](PyObject *obj, void *ptr)->s32
+	{
+	    s32 fd;
+	    if ((fd = PyObject_AsFileDescriptor(obj)) < 0) return 0;
+	    *((s32 *)ptr) = fd;
+	    return 1;
+	});
+	
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$O&O&iszzsp", (char **)kwlist, GetFD, &logFD,
+											GetFD, &errorFD,
+											&nThreads,
+											&samFileName,
+											&fastaRefFileName,
+											&overrideName,
+											&fallbackName,
+											&useMI)) return 0;
 
-    link_stats_return_data data;
-    u08 runState;
+	if (nThreads <= 0) Error("num_threads (%d) <= 0", nThreads);
+	if (!samFileName) Error("sam_file_name not set");
+	if (!fallbackName) Error("fallback_name not set");
+
+	CreateMemoryArena(workingSet, MegaByte(512));
+
+	runArgs.logFD = logFD;
+	runArgs.numThreads = (u32)nThreads;
+	runArgs.samFileName = PushU64String(samFileName, &workingSet);
+	runArgs.fastaReferenceFileName = PushU64String(fastaRefFileName, &workingSet);
+	runArgs.overrideName = PushU64String(overrideName, &workingSet);
+	runArgs.fallbackName = PushU64String(fallbackName, &workingSet);
+	runArgs.useMI = (u08)useMI;
+	runArgs.arena = &workingSet;
+    }
+    
+    link_stats_return_data *data;
     Py_BEGIN_ALLOW_THREADS;
-    runState = LinkStats(&runArgs, &data);
+    data = LinkStats(&runArgs);
     Py_END_ALLOW_THREADS;
-    if (!runState) Error("_LinkStats_C Run Error");
-
-    PyObject *genomeLength = PyLong_FromUnsignedLongLong(data.genomeLength);
-    
-    PyObject *refNames = PyTuple_New((Py_ssize_t)data.refNames->count);
+    if (!data)
     {
-	TraverseLinkedList(data.refNames->head) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, Py_BuildValue("s", (const char *)charU64String(node->data)));
+	FreeMemoryArena(workingSet);
+	Error("_LinkStats_C Run Error");
     }
     
-    PyObject *basicStats = PyTuple_New((Py_ssize_t)data.basicStats->size);
+    PyObject *genomeLength = PyLong_FromUnsignedLongLong(data->genomeLength);
+    
+    PyObject *refNames = PyTuple_New((Py_ssize_t)data->refNames->count);
     {
-	TraverseLinkedList(WavlTreeFreezeToLL(data.basicStats)) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), BasicStatsToTuple(node->value)));
+	TraverseLinkedList(data->refNames->head) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, Py_BuildValue("s", (const char *)charU64String(node->data)));
     }
     
-    PyObject *moleculeData = PyTuple_New((Py_ssize_t)data.moleculeData->size);
+    PyObject *basicStats = PyTuple_New((Py_ssize_t)data->basicStats->size);
     {
-	TraverseLinkedList(WavlTreeFreezeToLL(data.moleculeData)) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), MoleculeMap1ToTuple(node->value, &workingSet)));
+	TraverseLinkedList(WavlTreeFreezeToLL(data->basicStats)) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), BasicStatsToTuple(node->value)));
+    }
+    
+    PyObject *moleculeData = PyTuple_New((Py_ssize_t)data->moleculeData->size);
+    {
+	TraverseLinkedList(WavlTreeFreezeToLL(data->moleculeData)) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), MoleculeMap1ToTuple(node->value)));
     }
 
     FreeMemoryArena(workingSet);

@@ -46,11 +46,11 @@ main(s32 numCLIArgs, const char **cliArgs)
     args.useMI = 1;
     args.arena = &workingSet;
 
-    link_stats_return_data data;
-    if (LinkStats(&args, &data))
+    link_stats_return_data *data;
+    if ((data = LinkStats(&args)))
     {
-        printf("\nGenome Length: %" PRIu64 "\n\n", data.genomeLength);
-        TraverseLinkedList(WavlTreeFreezeToLL(data.basicStats))
+        printf("\nGenome Length: %" PRIu64 "\n\n", data->genomeLength);
+        TraverseLinkedList(WavlTreeFreezeToLL(data->basicStats))
         {
             basic_stats *stats = node->value;
             printf("%s:\n", charU64String(node->key));

@@ -238,10 +238,10 @@ WavlTreeBalance(wavl_tree<k,v> *tree, wavl_node<k,v> *node)
 template
 <typename k, typename v, typename l>
 wavl_node<k,v> *
-WavlTreeInsertValue(memory_arena *arena, wavl_tree<k,v> *tree, l *key)
+WavlTreeFindNode(memory_arena *arena, wavl_tree<k,v> *tree, l *key)
 {
-    wavl_node<k,v> *node = tree->root;
-    if (!node)
+    wavl_node<k,v> **node;
+    if (!(*(node = &tree->root)))
     {
         ++tree->size;
         return (tree->root = WavlTreeNewNode(arena, (wavl_node<k,v> *)0, key));
@@ -250,14 +250,13 @@ WavlTreeInsertValue(memory_arena *arena, wavl_tree<k,v> *tree, l *key)
     wavl_node<k,v> *parent;
     do
     {
-        if (*key == *node->key) return node;
-        parent = node;
-        node = *key < *node->key ? node->left : node->right;
-    } while (node);
+        if (*key == *(*node)->key) return *node;
+        parent = *node;
+        node = *key < *(*node)->key ? &(*node)->left : &(*node)->right;
+    } while (*node);
 
-    wavl_node<k,v> *newNode = WavlTreeNewNode(arena, parent, key);
     ++tree->size;
-    (*key < *parent->key ? parent->left : parent->right) = newNode;
+    auto result = *node = WavlTreeNewNode(arena, parent, key);
 
     if (!parent->rank)
     {
@@ -265,7 +264,7 @@ WavlTreeInsertValue(memory_arena *arena, wavl_tree<k,v> *tree, l *key)
         WavlTreeBalance(tree, parent);
     }
 
-    return newNode;
+    return result;
 }
 
 template
@@ -276,12 +275,9 @@ WavlTreeFreezeToLL(wavl_node<k,v> *node, wavl_node<k,v> *prevNode, wavl_node<k,v
     if (node) 
     { 
         prevNode = WavlTreeFreezeToLL(node->left, prevNode, head); 
-
         (prevNode ? prevNode->next : *head) = node;
         node->next = 0;
-        prevNode = node;
-
-        prevNode = WavlTreeFreezeToLL(node->right, prevNode, head); 
+        prevNode = WavlTreeFreezeToLL(node->right, node, (wavl_node<k,v> **)0); 
     }
 
     return prevNode;
