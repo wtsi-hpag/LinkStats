@@ -28,51 +28,51 @@ bool
 operator
 <(u64_string const& lhs, u64_string const& rhs)
 {
-	if (lhs.id < rhs.id) return true;
-	else if (lhs.id > rhs.id) return false;
-	else
-	{
-		u64 *data1 = (u64 *)&lhs.string;
-		u64 *data2 = (u64 *)&rhs.string;
-		ForLoop(Min(lhs.length, rhs.length))
-		{
-			if (data1[index] < data2[index]) return true;
-			else if (data1[index] > data2[index]) return false;
-		}
-		if (lhs.length < rhs.length) return true;
-		else return false;
-	}
+    if (lhs.id < rhs.id) return true;
+    else if (lhs.id > rhs.id) return false;
+    else
+    {
+        u64 *data1 = (u64 *)&lhs.string;
+        u64 *data2 = (u64 *)&rhs.string;
+        ForLoop(Min(lhs.length, rhs.length))
+        {
+            if (data1[index] < data2[index]) return true;
+            else if (data1[index] > data2[index]) return false;
+        }
+        if (lhs.length < rhs.length) return true;
+        else return false;
+    }
 }
 
 bool
 operator
 ==(u64_string const& lhs, u64_string const& rhs)
 {
-	if (lhs.id != rhs.id) return false;
-	else if (lhs.length != rhs.length) return false;
-	else
-	{
-		u64 *data1 = (u64 *)&lhs.string;
-		u64 *data2 = (u64 *)&rhs.string;
-		ForLoop(lhs.length) if (data1[index] != data2[index]) return false;
-		return true;
-	}
+    if (lhs.id != rhs.id) return false;
+    else if (lhs.length != rhs.length) return false;
+    else
+    {
+        u64 *data1 = (u64 *)&lhs.string;
+        u64 *data2 = (u64 *)&rhs.string;
+        ForLoop(lhs.length) if (data1[index] != data2[index]) return false;
+        return true;
+    }
 }
 
 u64_string *
 PushU64String(char *charString, memory_arena *arena, s32 id)
 {
-	if (!charString) return 0;
+    if (!charString) return 0;
 
-	u32 len = (((u32)strlen(charString)) >> 3) + 1;
-	u64 *stringData = PushArrayP(arena, u64, len + 1);
-	stringData[len] = 0;
-	strcpy((char *)(stringData + 1), (const char *)charString);
+    u32 len = (((u32)strlen(charString)) >> 3) + 1;
+    u64 *stringData = PushArrayP(arena, u64, len + 1);
+    stringData[len] = 0;
+    strcpy((char *)(stringData + 1), (const char *)charString);
 
-	((u32 *)stringData)[1] = len;
-	((s32 *)stringData)[0] = id;
+    ((u32 *)stringData)[1] = len;
+    ((s32 *)stringData)[0] = id;
 
-	return (u64_string *)stringData;
+    return (u64_string *)stringData;
 }
 
 char *

@@ -29,124 +29,124 @@ global_function
 u64
 GetAlignmentPadding(u64 base, u32 alignment_pow2)
 {
-	u64 alignment = (u64)Pow2(alignment_pow2);
-	u64 result = ((base + alignment - 1) & ~(alignment - 1)) - base;
+    u64 alignment = (u64)Pow2(alignment_pow2);
+    u64 result = ((base + alignment - 1) & ~(alignment - 1)) - base;
 
-	return(result);
+    return(result);
 }
 
 void
 CreateMemoryArena_(memory_arena *arena, u64 size, u32 alignment_pow2)
 {
-	u64 linkSize = sizeof(memory_arena);
-	linkSize += GetAlignmentPadding(linkSize, alignment_pow2);
-	u64 realSize = size + linkSize;
+    u64 linkSize = sizeof(memory_arena);
+    linkSize += GetAlignmentPadding(linkSize, alignment_pow2);
+    u64 realSize = size + linkSize;
 
 #ifndef _WIN32
-	(void)posix_memalign((void **)&arena->base, Pow2(alignment_pow2), realSize);
+    (void)posix_memalign((void **)&arena->base, Pow2(alignment_pow2), realSize);
 #else
 #include <memoryapi.h>
-	(void)alignment_pow2;
-	arena->base = (u08 *)VirtualAlloc(NULL, realSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    (void)alignment_pow2;
+    arena->base = (u08 *)VirtualAlloc(NULL, realSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #endif
-	arena->currentSize = 0;
-	arena->maxSize = size;
+    arena->currentSize = 0;
+    arena->maxSize = size;
 #pragma clang diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"	
-	arena->next = (memory_arena *)arena->base;
+#pragma GCC diagnostic ignored "-Wcast-align"   
+    arena->next = (memory_arena *)arena->base;
 #pragma clang diagnostic pop
-	arena->base += linkSize;
+    arena->base += linkSize;
 
-	arena->next->base = 0;
-	arena->active = 1;
+    arena->next->base = 0;
+    arena->active = 1;
 }
 
 void
 FreeMemoryArena_(memory_arena *arena)
 {
-	if (arena->next)
-	{
-		if (arena->next->base)
-		{
-			FreeMemoryArena_(arena->next);
-		}
-		free(arena->next);
-	}
+    if (arena->next)
+    {
+        if (arena->next->base)
+        {
+            FreeMemoryArena_(arena->next);
+        }
+        free(arena->next);
+    }
 }
 
 void *
 PushSize_(memory_arena *arena, u64 size, u32 alignment_pow2)
 {
-	if (!arena->active && arena->next && arena->next->base && !arena->next->currentSize)
-	{
-		arena->active = 1;
-	}
+    if (!arena->active && arena->next && arena->next->base && !arena->next->currentSize)
+    {
+        arena->active = 1;
+    }
 
-	u64 padding = GetAlignmentPadding((u64)(arena->base + arena->currentSize), alignment_pow2);
+    u64 padding = GetAlignmentPadding((u64)(arena->base + arena->currentSize), alignment_pow2);
 
-	void *result;
-	if (!arena->active || ((size + arena->currentSize + padding + sizeof(u64)) > arena->maxSize))
-	{
-		arena->active = 0;
-		if (arena->next)
-		{
-			if (arena->next->base)
-			{
-				result = PushSize_(arena->next, size, alignment_pow2);
-			}
-			else
-			{
-				u64 linkSize = sizeof(memory_arena);
-				linkSize += GetAlignmentPadding(linkSize, alignment_pow2);
-				u64 realSize = size + padding + sizeof(u64) + linkSize;
-				realSize = Max(realSize, arena->maxSize);
+    void *result;
+    if (!arena->active || ((size + arena->currentSize + padding + sizeof(u64)) > arena->maxSize))
+    {
+        arena->active = 0;
+        if (arena->next)
+        {
+            if (arena->next->base)
+            {
+                result = PushSize_(arena->next, size, alignment_pow2);
+            }
+            else
+            {
+                u64 linkSize = sizeof(memory_arena);
+                linkSize += GetAlignmentPadding(linkSize, alignment_pow2);
+                u64 realSize = size + padding + sizeof(u64) + linkSize;
+                realSize = Max(realSize, arena->maxSize);
 
-				CreateMemoryArenaP(arena->next, realSize, alignment_pow2);
-				result = PushSize_(arena->next, size, alignment_pow2);
-			}
-		}
-		else
-		{
-			result = 0;
-			fprintf(stderr, "Push of %" PRIu64 " bytes failed, out of memory.\n", size);
-			*((volatile u32 *)0) = 0;
-		}
-	}
-	else
-	{
-		result = arena->base + arena->currentSize + padding;
-		arena->currentSize += (size + padding + sizeof(u64));
+                CreateMemoryArenaP(arena->next, realSize, alignment_pow2);
+                result = PushSize_(arena->next, size, alignment_pow2);
+            }
+        }
+        else
+        {
+            result = 0;
+            fprintf(stderr, "Push of %" PRIu64 " bytes failed, out of memory.\n", size);
+            *((volatile u32 *)0) = 0;
+        }
+    }
+    else
+    {
+        result = arena->base + arena->currentSize + padding;
+        arena->currentSize += (size + padding + sizeof(u64));
 #pragma clang diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"		
-		*((u64 *)(arena->base + arena->currentSize - sizeof(u64))) = (size + padding);
+#pragma GCC diagnostic ignored "-Wcast-align"       
+        *((u64 *)(arena->base + arena->currentSize - sizeof(u64))) = (size + padding);
 #pragma clang diagnostic pop
-	}
+    }
 
-	return(result);
+    return(result);
 }
 
 void
 FreeLastPush_(memory_arena *arena)
 {
-	if (!arena->active && arena->next && arena->next->base)
-	{
-		if (arena->next->active && !arena->next->currentSize)
-		{
-			arena->active = 1;
-			FreeLastPush_(arena);
-		}
-		else
-		{
-			FreeLastPush_(arena->next);
-		}
-	}
-	else if (arena->currentSize)
-	{
+    if (!arena->active && arena->next && arena->next->base)
+    {
+        if (arena->next->active && !arena->next->currentSize)
+        {
+            arena->active = 1;
+            FreeLastPush_(arena);
+        }
+        else
+        {
+            FreeLastPush_(arena->next);
+        }
+    }
+    else if (arena->currentSize)
+    {
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
-		u64 sizeToRemove = *((u64 *)(arena->base + arena->currentSize - sizeof(u64)));
-#pragma clang diagnostic pop		
-		arena->currentSize -= (sizeToRemove + sizeof(u64));
-	}
+        u64 sizeToRemove = *((u64 *)(arena->base + arena->currentSize - sizeof(u64)));
+#pragma clang diagnostic pop        
+        arena->currentSize -= (sizeToRemove + sizeof(u64));
+    }
 }
 
