@@ -89,32 +89,6 @@ MakeCopy(memory_arena *arena, u64_string *string, u64_string **out)
 
 bool
 operator
-<(char_string const& lhs, char_string const& rhs)
-{
-    if (lhs.id < rhs.id) return true;
-    else if (lhs.id > rhs.id) return false;
-    else return strcmp((const char *)lhs.string, (const char *)rhs.string) < 0;
-}
-
-bool
-operator
-==(char_string const& lhs, char_string const& rhs)
-{
-    if (lhs.id != rhs.id) return false;
-    else return !strcmp((const char *)lhs.string, (const char *)rhs.string);
-}
-
-void
-MakeCopy(memory_arena *arena, char_string *string, char_string **out)
-{
-    char_string *result = PushStructP(arena, char_string);
-    result->string = strcpy(PushArrayP(arena, char, strlen((const char *)string->string) + 1), (const char *)string->string);
-    result->id = string->id;
-    *out = result;
-}
-
-bool
-operator
 <(char_string const& lhs, u64_string const& rhs)
 {
     if (lhs.id < rhs.id) return true;
@@ -137,10 +111,10 @@ MakeCopy(memory_arena *arena, char_string *string, u64_string **out)
 }
 
 void
-MakeCopy(memory_arena *arena, s32 *tid, s32 **out)
+MakeCopy(memory_arena *arena, s32 *id, s32 **out)
 {
     s32 *tmp = PushArrayP(arena, s32, 1);
-    tmp[0] = *tid;
+    tmp[0] = *id;
     *out = tmp;
 }
 

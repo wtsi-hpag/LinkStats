@@ -31,10 +31,7 @@ u64_string
     s32 id;
     u32 length;
     u64 string;
-    friend bool operator< (u64_string const& a, u64_string const& b);
-    friend bool operator== (u64_string const& a, u64_string const& b);
 };
-
 
 u64_string *PushU64String(char *charString, memory_arena *arena, s32 id = 0);
 char *charU64String(u64_string *string);
@@ -46,13 +43,11 @@ char_string
    char *string;
    s32 id;
    char_string(char *s, s32 i = 0) { string = s; id = i; }
-   friend bool operator< (char_string const& a, char_string const& b);
-   friend bool operator== (char_string const& a, char_string const& b);
 };
 
-void MakeCopy(memory_arena *arena, char_string *string, char_string **out);
 void MakeCopy(memory_arena *arena, char_string *string, u64_string **out);
-void MakeCopy(memory_arena *arena, s32 *tid, s32 **out);
+
+void MakeCopy(memory_arena *arena, s32 *id, s32 **out);
 
 template
 <typename k, typename v>
@@ -110,34 +105,34 @@ WavlTreeNewNode(memory_arena *arena, wavl_node<k,v> *parent, l *key)
 
 template
 <typename k, typename v>
-u32
+u08
 WavlTreeNeedToRotateLeftStrong(wavl_node<k,v> *node)
 {
-    return((node->rank == 1 && !node->left) || (node->rank > node->left->rank + 1));
+    return(((node->rank == 1) && !node->left) || (node->rank > (node->left->rank + 1)));
 }
 
 template
 <typename k, typename v>
-u32
+u08
 WavlTreeNeedToRotateRightStrong(wavl_node<k,v> *node)
 {
-    return((node->rank == 1 && !node->right) || (node->rank > node->right->rank + 1));
+    return(((node->rank == 1) && !node->right) || (node->rank > (node->right->rank + 1)));
 }
 
 template
 <typename k, typename v>
-u32
+u08
 WavlTreeNeedToRotateLeftWeak(wavl_node<k,v> *node)
 {
-    return((!node->left) || (node->rank > node->left->rank + 1));
+    return((!node->left) || (node->rank > (node->left->rank + 1)));
 }
 
 template
 <typename k, typename v>
-u32
+u08
 WavlTreeNeedToRotateRightWeak(wavl_node<k,v> *node)
 {
-    return((!node->right) || (node->rank > node->right->rank + 1));
+    return((!node->right) || (node->rank > (node->right->rank + 1)));
 }
 
 template
@@ -147,23 +142,9 @@ WavlTreeRotateLeft(wavl_tree<k,v> *tree, wavl_node<k,v> *node)
 {
     wavl_node<k,v> *right = node->right;
     node->right = right->left;
-    if (right->left)
-    {
-        right->left->parent = node;
-    }
+    if (right->left) right->left->parent = node;
     right->parent = node->parent;
-    if (!node->parent)
-    {
-        tree->root = right;
-    }
-    else if (node->parent->left == node)
-    {
-        node->parent->left = right;
-    }
-    else
-    {
-        node->parent->right = right;
-    }
+    (node->parent ? (node->parent->left == node ? node->parent->left : node->parent->right) : tree->root) = right;
     right->left = node;
     node->parent = right;
 }
@@ -175,23 +156,9 @@ WavlTreeRotateRight(wavl_tree<k,v> *tree, wavl_node<k,v> *node)
 {
     wavl_node<k,v> *left = node->left;
     node->left = left->right;
-    if (left->right)
-    {
-        left->right->parent = node;
-    }
+    if (left->right) left->right->parent = node;
     left->parent = node->parent;
-    if (!node->parent)
-    {
-        tree->root = left;
-    }
-    else if (node->parent->right == node)
-    {
-        node->parent->right = left;
-    }
-    else
-    {
-        node->parent->left = left;
-    }
+    (node->parent ? (node->parent->right == node ? node->parent->right : node->parent->left) : tree->root) = left;
     left->right = node;
     node->parent = left;
 }
@@ -220,17 +187,20 @@ WavlTreeBalance(wavl_tree<k,v> *tree, wavl_node<k,v> *node)
                 break;
             }
         }
-        else if (WavlTreeNeedToRotateLeftStrong(parent))
+        else
         {
-            if (WavlTreeNeedToRotateRightWeak(node))
+            if (WavlTreeNeedToRotateLeftStrong(parent))
             {
-                --node->rank;
-                ++node->left->rank;
-                WavlTreeRotateRight(tree, node);
+                if (WavlTreeNeedToRotateRightWeak(node))
+                {
+                    --node->rank;
+                    ++node->left->rank;
+                    WavlTreeRotateRight(tree, node);
+                }
+                --parent->rank;
+                WavlTreeRotateLeft(tree, parent);
+                break;
             }
-            --parent->rank;
-            WavlTreeRotateLeft(tree, parent);
-            break;
         }
     }
 }
