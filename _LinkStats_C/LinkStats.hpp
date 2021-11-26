@@ -41,17 +41,6 @@ basic_stats
 };
 
 struct
-alignment
-{
-    u32 haveMI : 1;
-    u32 qual : 31;
-    u64 referenceStart;
-    u64 referenceEnd;
-    u64 queryLength;
-    s32 mi;
-};
-
-struct
 molecule
 {
     u64 minCoord;

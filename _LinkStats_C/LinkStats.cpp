@@ -81,7 +81,7 @@ FillCBTask(void *in)
     do
     {
         u32 headPlusOne = (head + 1) & (CircularBufferSize - 1);
-        while (headPlusOne == (u32)data->buffer->tail) {}
+        while (data->threadRunning && (headPlusOne == (u32)data->buffer->tail)) {}
 
         bam1_t *record = data->buffer->records + head;
         bam_set_mempolicy(record, BAM_USER_OWNS_STRUCT | BAM_USER_OWNS_DATA);
@@ -92,7 +92,7 @@ FillCBTask(void *in)
         {
             u32 bTail = (u32)data->buffer->bufferTail;
             freeMem = (((bHead < bTail) ? bTail : BufferSize) - bHead) & (~7U);
-        } while (freeMem < AlignmentMemory);
+        } while (data->threadRunning && (freeMem < AlignmentMemory));
 
         record->data = data->buffer->dataBuffer + bHead;
         record->m_data = freeMem;
@@ -102,7 +102,7 @@ FillCBTask(void *in)
             if (bam_get_mempolicy(record) & BAM_USER_OWNS_DATA) bHead += (record->m_data = (((u32)record->l_data + 7) & (~7U)));
             data->buffer->head = (volatile u32)(head = headPlusOne);
         }
-    } while (readState >= 0);
+    } while (data->threadRunning && (readState >= 0));
 
     data->threadRunning = 0;
     pthread_exit((void *)(readState < -1));
@@ -129,22 +129,6 @@ NewBasicStats(memory_arena *arena)
 }
 
 global_function
-alignment *
-NewAlignment(bam1_t *record, s32 *mi, memory_arena *arena)
-{
-    alignment *al = PushStructP(arena, alignment);
-
-    al->haveMI = mi ? 1 : 0;
-    al->qual = (u32)record->core.qual;
-    al->referenceStart = (u64)record->core.pos;
-    al->referenceEnd = (u64)bam_endpos(record);
-    al->queryLength = (u64)record->core.l_qseq;
-    al->mi = mi ? *mi : 0;
-
-    return al;
-}
-
-global_function
 void
 UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s32 *mi, memory_arena *arena)
 {
@@ -156,7 +140,7 @@ UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s3
     u32 recReadLen = (u32)record->core.l_qseq; 
     u32 recQual = (u32)record->core.qual;
 
-    if (!molecules->count || ((recMin > molMax) && ((molMax - recMin) > groupCutOffDis)))
+    if (!molecules->count || ((recMin > molMax) && ((recMin - molMax) >= groupCutOffDis)))
     {
         molecule *newMol = PushStructP(arena, molecule);
         newMol->minCoord = recMin;
@@ -285,11 +269,20 @@ LinkStats(link_stats_run_args *args)
                     {
                         bam1_t *record = cBuffer->records + tail;
 
-                        u64 recPos = (u64)record->core.pos;
-                        s32 recTid = (s32)record->core.tid;
-                        if ((recPos < currPos) || (recTid < currTid)) goto NotSorted;
-                        currPos = recPos;
-                        currTid = recTid;
+                        s32 recTid;
+                        if ((recTid = (s32)record->core.tid) >= 0)
+                        {
+                            u64 recPos = (u64)record->core.pos;
+                            if ((recTid < currTid) || ((recTid == currTid) && (recPos < currPos)))
+                            {
+                                cbThreadData->threadRunning = 0;
+                                void *tmp;
+                                (void)pthread_join(readingThread, &tmp);
+                                goto NotSorted;
+                            }
+                            currPos = recPos;
+                            currTid = recTid;
+                        }
 
                         #define PassFilter(flags) (record->core.flag & (flags))
                         if (!PassFilter(BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
@@ -364,7 +357,6 @@ LinkStats(link_stats_run_args *args)
                                     if (!node3->value) NewLL(workingSet, &node3->value);
 
                                     UpdateMolecule(groupCutOffDis, node3->value, record, mi, workingSet);
-                                    //LLAddValue(node3->value, NewAlignment(record, mi, workingSet), workingSet);
                                 }
                             }
                         }

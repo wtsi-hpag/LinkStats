@@ -38,7 +38,6 @@ from typing import List
 import click as ck
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import pandas as pd
 from tqdm import tqdm as _tqdm
@@ -295,15 +294,6 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
     def GetAllStatsFromAFs():
         @dataclass(frozen=True, eq=True)
-        class Alignment:
-            haveMI: bool
-            mapping_quality: int
-            reference_start: int
-            reference_end: int
-            query_length: int
-            mi: int
-
-        @dataclass(frozen=True, eq=True)
         class Molecule:
             n_reads: int
             mi: int
@@ -354,58 +344,31 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             return (
                 genome_length,
                 {name: BasicStats(*stats) for name, stats in basic_stats},
-                {
-                    name: {
-                        ref_names[tid]: {
-                            bxmi: mols
-                            for bxmi, mols in t2
-                        }
-                        for tid, t2 in t1
-                    }
+                tuple(
+                    (name, tuple((ref_names[tid], t2) for tid, t2 in t1))
                     for name, t1 in molecule_data
-                },
+                ),
             )
 
         def GetStats(alignment_file, threads):
             genome_length, basic_stats, molecule_data = ReadSAM(alignment_file, threads)
 
-            def ClusterAlignments(alignments, bx, reference_name):
-                def pairwise(it):
-                    a, b = tee(it)
-                    next(b, None)
-                    return zip(a, b)
-
-                g = nx.Graph()
-                g.add_nodes_from(alignments)
-                g.add_edges_from(
-                    (a, b)
-                    for a, b in pairwise(
-                        sorted(alignments, key=lambda a: a.reference_start)
-                    )
-                    if (b.reference_start - a.reference_end)
-                    < alignment_file.cluster_threshold
-                )
-                yield from (
-                    Molecule(cc, bx, reference_name)
-                    for cc in nx.connected_components(g)
-                )
-
             molecule_data = pd.DataFrame(
                 (
                     (
                         name,
-                        len(molecule),
-                        molecule.n_reads,
-                        molecule.mi,
-                        molecule.bx,
-                        molecule.ref,
-                        molecule.mean_read_depth,
-                        molecule.mean_mapq,
+                        max(0, pos_max - pos_min),
+                        n_reads,
+                        mi,
+                        bx,
+                        reference_name,
+                        total_read_length / max(1, pos_max - pos_min),
+                        total_mapping_quality / n_reads,
                     )
-                    for name, a in molecule_data.items()
-                    for reference_name, b in a.items()
-                    for (bx, _), c in b.items()
-                    for molecule in (Molecule(*mol, bx, reference_name) for mol in c)
+                    for name, a in molecule_data
+                    for reference_name, b in a
+                    for (bx, _), c in b
+                    for n_reads, mi, total_mapping_quality, pos_min, pos_max, total_read_length in c
                 ),
                 columns=MOL_DATA_HEADER,
             )
