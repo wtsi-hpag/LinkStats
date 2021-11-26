@@ -39,6 +39,7 @@ main(s32 numCLIArgs, const char **cliArgs)
     link_stats_run_args args;
     args.logFD = STDERR_FILENO;
     args.numThreads = 8;
+    args.groupCutOffDis = 50000;
     args.samFileName = PushU64String((char *)cliArgs[1], &workingSet);
     args.fastaReferenceFileName = numCLIArgs > 2 ? PushU64String((char *)cliArgs[2], &workingSet) : 0;
     args.overrideName = 0;

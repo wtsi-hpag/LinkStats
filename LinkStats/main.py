@@ -303,23 +303,16 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
             query_length: int
             mi: int
 
+        @dataclass(frozen=True, eq=True)
         class Molecule:
-            def __init__(self, alignments, bx, reference_name):
-                alignments = tuple(alignments)
-
-                self.min = min(al.reference_start for al in alignments)
-                self.max = max(al.reference_end for al in alignments)
-
-                self.n_reads = len(alignments)
-                self.total_read_len = sum(al.query_length for al in alignments)
-                self.total_mapping_quality = sum(
-                    al.mapping_quality for al in alignments
-                )
-
-                mi = tuple(set(al.mi if al.haveMI else None for al in alignments))
-                self.mi = mi[0] if len(mi) == 1 else None
-                self.bx = bx
-                self.ref = reference_name
+            n_reads: int
+            mi: int
+            total_mapping_quality: int
+            min: int
+            max: int
+            total_read_len: int
+            bx: str
+            ref: str
 
             def __len__(self):
                 return max(0, self.max - self.min)
@@ -350,6 +343,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     log=handles.info,
                     error=handles.error,
                     num_threads=threads,
+                    group_cutoff_dis=alignment_file.cluster_threshold,
                     sam_file_name=str(alignment_file.file),
                     fasta_file_name=alignment_file.ref,
                     override_name=alignment_file.name,
@@ -363,8 +357,8 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 {
                     name: {
                         ref_names[tid]: {
-                            bxmi: tuple(Alignment(*aln) for aln in alns)
-                            for bxmi, alns in t2
+                            bxmi: mols
+                            for bxmi, mols in t2
                         }
                         for tid, t2 in t1
                     }
@@ -411,7 +405,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     for name, a in molecule_data.items()
                     for reference_name, b in a.items()
                     for (bx, _), c in b.items()
-                    for molecule in ClusterAlignments(c, bx, reference_name)
+                    for molecule in (Molecule(*mol, bx, reference_name) for mol in c)
                 ),
                 columns=MOL_DATA_HEADER,
             )

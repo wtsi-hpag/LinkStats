@@ -25,6 +25,8 @@ SOFTWARE.
 
 #include <LinkStats.hpp>
 
+#include <unistd.h>
+
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wreserved-id-macro"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
@@ -53,27 +55,32 @@ BasicStatsToTuple (basic_stats *stats)
 
 static
 PyObject *
-MoleculeAlignmentsToTuple (ll<alignment *> *list)
+MoleculeToTuple (ll<molecule *> *list)
 {
+    auto None = []()->PyObject*
+    {
+	Py_RETURN_NONE;
+    };
+    
     PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
-    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(6, PyBool_FromLong((s32)node->data->haveMI), PyLong_FromLong(node->data->qual), PyLong_FromUnsignedLongLong(node->data->referenceStart), PyLong_FromUnsignedLongLong(node->data->referenceEnd), PyLong_FromUnsignedLongLong(node->data->queryLength), PyLong_FromLong(node->data->mi)));
+    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(6, PyLong_FromUnsignedLong(node->data->nReads), node->data->haveMI ? PyLong_FromLong(node->data->mi) : None(), PyLong_FromUnsignedLong(node->data->totalMappingQuality), PyLong_FromUnsignedLongLong(node->data->minCoord), PyLong_FromUnsignedLongLong(node->data->maxCoord), PyLong_FromUnsignedLong(node->data->totalReadLength)));
 
     return tuple;
 }
 
 static
 PyObject *
-MoleculeMap2ToTuple (wavl_tree<u64_string, ll<alignment *>> *map2)
+MoleculeMap2ToTuple (wavl_tree<u64_string, ll<molecule *>> *map2)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map2->size);
-    TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeAlignmentsToTuple(node->value)));
+    TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeToTuple(node->value)));
     
     return tuple;
 }
 
 static
 PyObject *
-MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>> *map1)
+MoleculeMap1ToTuple (wavl_tree<s32, wavl_tree<u64_string, ll<molecule *>>> *map1)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map1->size);
     TraverseLinkedList(WavlTreeFreezeToLL(map1)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*(node->key)), MoleculeMap2ToTuple(node->value)));
@@ -102,6 +109,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     {
 	s32 logFD = -1;
 	s32 nThreads = 1;
+	s64 groupCutOffDis = 50000;
 	char *samFileName = 0;
 	char *fastaRefFileName = 0;
 	char *overrideName = 0;
@@ -111,6 +119,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	static const char *kwlist[] = {	"log",
 					"error",
 					"num_threads",
+					"group_cutoff_dis",
 					"sam_file_name",
 					"fasta_file_name",
 					"override_name",
@@ -126,9 +135,10 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 	    return 1;
 	});
 	
-	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$O&O&iszzsp", (char **)kwlist, GetFD, &logFD,
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$O&O&iLszzsp", (char **)kwlist, GetFD, &logFD,
 											GetFD, &errorFD,
 											&nThreads,
+											&groupCutOffDis,
 											&samFileName,
 											&fastaRefFileName,
 											&overrideName,
@@ -136,6 +146,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 											&useMI)) return 0;
 
 	if (nThreads <= 0) Error("num_threads (%d) <= 0", nThreads);
+	if (groupCutOffDis <= 0) Error("group_cutoff_dis (%" PRId64 ") <= 0", groupCutOffDis);
 	if (!samFileName) Error("sam_file_name not set");
 	if (!fallbackName) Error("fallback_name not set");
 
@@ -143,6 +154,7 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
 
 	runArgs.logFD = logFD;
 	runArgs.numThreads = (u32)nThreads;
+	runArgs.groupCutOffDis = (u64)groupCutOffDis;
 	runArgs.samFileName = PushU64String(samFileName, &workingSet);
 	runArgs.fastaReferenceFileName = PushU64String(fastaRefFileName, &workingSet);
 	runArgs.overrideName = PushU64String(overrideName, &workingSet);

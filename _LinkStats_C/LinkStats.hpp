@@ -52,10 +52,23 @@ alignment
 };
 
 struct
+molecule
+{
+    u64 minCoord;
+    u64 maxCoord;
+    u32 totalReadLength;
+    u32 nReads : 31;
+    u32 haveMI : 1;
+    u32 totalMappingQuality;
+    s32 mi;
+};
+
+struct
 link_stats_run_args
 {
     s32 logFD;
     u32 numThreads;
+    u64 groupCutOffDis;
     u64_string *samFileName;
     u64_string *fastaReferenceFileName;
     u64_string *overrideName;
@@ -70,7 +83,7 @@ link_stats_return_data
     u64 genomeLength;
     ll<u64_string *> *refNames;
     wavl_tree<u64_string, basic_stats> *basicStats;
-    wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll<alignment *>>>> *moleculeData;
+    wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll<molecule *>>>> *moleculeData;
 };
 
 link_stats_return_data *LinkStats(link_stats_run_args *args);
