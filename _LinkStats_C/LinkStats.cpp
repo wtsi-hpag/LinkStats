@@ -69,19 +69,27 @@ cb_fill_thread_data
     volatile u08 threadRunning;
 };
 
+#define SAM_Data_Not_Sorted_Int -2147483648
+#define SAM_Data_Not_Sorted_VoidPtr ((void *)2)
+#define SAM_Data_Read_Error_VoidPtr ((void *)1)
+
 global_function
 void *
 FillCBTask(void *in)
 {
     cb_fill_thread_data *data = (cb_fill_thread_data *)in;
+    
     u32 bHead = 0;
     u32 head = (u32)data->buffer->head;
-
+    
+    u64 currPos = 0;
+    s32 currTid = 0;
+    
     s32 readState;
     do
     {
         u32 headPlusOne = (head + 1) & (CircularBufferSize - 1);
-        while (data->threadRunning && (headPlusOne == (u32)data->buffer->tail)) {}
+        while (headPlusOne == (u32)data->buffer->tail) {}
 
         bam1_t *record = data->buffer->records + head;
         bam_set_mempolicy(record, BAM_USER_OWNS_STRUCT | BAM_USER_OWNS_DATA);
@@ -92,7 +100,7 @@ FillCBTask(void *in)
         {
             u32 bTail = (u32)data->buffer->bufferTail;
             freeMem = (((bHead < bTail) ? bTail : BufferSize) - bHead) & (~7U);
-        } while (data->threadRunning && (freeMem < AlignmentMemory));
+        } while (freeMem < AlignmentMemory);
 
         record->data = data->buffer->dataBuffer + bHead;
         record->m_data = freeMem;
@@ -101,11 +109,20 @@ FillCBTask(void *in)
         {
             if (bam_get_mempolicy(record) & BAM_USER_OWNS_DATA) bHead += (record->m_data = (((u32)record->l_data + 7) & (~7U)));
             data->buffer->head = (volatile u32)(head = headPlusOne);
+
+            s32 recTid;
+            if ((recTid = (s32)record->core.tid) >= 0)
+            {
+                u64 recPos = (u64)record->core.pos;
+                if ((recTid < currTid) || ((recTid == currTid) && (recPos < currPos))) readState = SAM_Data_Not_Sorted_Int; 
+                currPos = recPos;
+                currTid = recTid;
+            }
         }
-    } while (data->threadRunning && (readState >= 0));
+    } while (readState >= 0);
 
     data->threadRunning = 0;
-    pthread_exit((void *)(readState < -1));
+    pthread_exit(readState == SAM_Data_Not_Sorted_Int ? SAM_Data_Not_Sorted_VoidPtr : (readState < -1 ? SAM_Data_Read_Error_VoidPtr : 0));
 }
 
 global_function
@@ -259,8 +276,6 @@ LinkStats(link_stats_run_args *args)
                 u08 printNBufferPtr = 0;
 
                 u64 recordCount = 0;
-                u64 currPos = 0;
-                s32 currTid = 0;
                 u32 tail = (u32)cBuffer->tail;
                 u32 head;
                 while ((tail != (head = (u32)cBuffer->head)) || cbThreadData->threadRunning)
@@ -268,22 +283,7 @@ LinkStats(link_stats_run_args *args)
                     if (tail != head)
                     {
                         bam1_t *record = cBuffer->records + tail;
-
-                        s32 recTid;
-                        if ((recTid = (s32)record->core.tid) >= 0)
-                        {
-                            u64 recPos = (u64)record->core.pos;
-                            if ((recTid < currTid) || ((recTid == currTid) && (recPos < currPos)))
-                            {
-                                cbThreadData->threadRunning = 0;
-                                void *tmp;
-                                (void)pthread_join(readingThread, &tmp);
-                                goto NotSorted;
-                            }
-                            currPos = recPos;
-                            currTid = recTid;
-                        }
-
+                        
                         #define PassFilter(flags) (record->core.flag & (flags))
                         if (!PassFilter(BAM_FSUPPLEMENTARY | BAM_FSECONDARY))
                         {
@@ -382,11 +382,16 @@ LinkStats(link_stats_run_args *args)
                     }
                 }
 
-                void *fileReadError;
-                if (pthread_join(readingThread, &fileReadError) || fileReadError) Log("Read error");
-                else runState = 1;
-
+                void *fileReadError = 0;
+                if (pthread_join(readingThread, &fileReadError) || fileReadError)
                 {
+                    Log("Read error");
+                    if (fileReadError == SAM_Data_Not_Sorted_VoidPtr) goto NotSorted;
+                }
+                else
+                {
+                    runState = 1;
+
                     Log("\nGenome Length: %$" PRIu64 "bp\n", genomeLength);
                     TraverseLinkedList(WavlTreeFreezeToLL(basicStats))
                     {
@@ -409,7 +414,7 @@ LinkStats(link_stats_run_args *args)
         else
         {
 NotSorted:
-            Log("Cannot process non-coordinate sorted SAM data");
+            Log("Cannot process non-coordinate-sorted SAM data");
         }
         ks_free(&string);
     }
