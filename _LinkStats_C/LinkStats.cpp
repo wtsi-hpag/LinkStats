@@ -130,9 +130,7 @@ basic_stats *
 NewBasicStats(memory_arena *arena)
 {
     basic_stats *stats = PushStructP(arena, basic_stats);
-    stats->insertSizes.count = 0;
-    stats->insertSizes.head = 0;
-    stats->insertSizes.tail = (ll_node<u64> *)&stats->insertSizes;
+    stats->medianInsertSize = 0;
     stats->totalReadLength = 0;
     stats->totalAlignments = 0;
     stats->totalDup = 0;
@@ -185,6 +183,41 @@ UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s3
     }
 }
 
+#define InsertSize_Median_Estimate_Histogram_Size 2048
+struct
+insertsize_histogram
+{
+    u64 hist[InsertSize_Median_Estimate_Histogram_Size];
+};
+
+global_function
+insertsize_histogram *
+NewInsertSizeHistogram(memory_arena *arena)
+{
+    insertsize_histogram *hist = PushStructP(arena, insertsize_histogram);
+    memset(hist, 0, sizeof(*hist));
+    
+    return hist;
+}
+
+global_function
+u64
+EstimateMedian(insertsize_histogram *hist)
+{
+    s64 count = 0;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size) count += (s64)hist->hist[index];
+    count /= 2;
+    u64 result;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size)
+    {
+        result = (u64)index;
+        count -= (s64)hist->hist[index];
+        if (count <= 0) break;
+    }
+
+    return result;
+}
+
 link_stats_return_data *
 LinkStats(link_stats_run_args *args)
 {
@@ -229,6 +262,9 @@ LinkStats(link_stats_run_args *args)
 
     wavl_tree<u64_string, u64_string> *idLookup;
     InitialiseWavlTree(workingSet, &idLookup);
+
+    wavl_tree<u64_string, insertsize_histogram> *insertsizeHists;
+    InitialiseWavlTree(workingSet, &insertsizeHists);
 
     wavl_tree<u64_string, basic_stats> *basicStats; 
     InitialiseWavlTree(workingSet, &basicStats);
@@ -309,20 +345,26 @@ LinkStats(link_stats_run_args *args)
                             }
 
                             basic_stats *stats;
-                            auto *node = WavlTreeFindNode(workingSet, basicStats, id);
-                            if (!(stats = node->value)) node->value = stats = NewBasicStats(workingSet);
-
                             {
-                                s64 insertSize;
-                                if ((insertSize = record->core.isize) > 0) LLAddValue(&stats->insertSizes, (u64)insertSize, workingSet);
-
-                                stats->totalReadLength += (u64)record->core.l_qseq;
-                                ++stats->totalAlignments;
-
-                                if (PassFilter(BAM_FUNMAP)) ++stats->totalUnM;
-                                if (PassFilter(BAM_FDUP)) ++stats->totalDup;
-                                if (PassFilter(BAM_FQCFAIL)) ++stats->totalQCF;
+                                auto *node = WavlTreeFindNode(workingSet, basicStats, id);
+                                if (!(stats = node->value)) node->value = stats = NewBasicStats(workingSet);
                             }
+                           
+                            insertsize_histogram *hist;
+                            {
+                                auto *node = WavlTreeFindNode(workingSet, insertsizeHists, id);
+                                if (!(hist = node->value)) node->value = hist = NewInsertSizeHistogram(workingSet);
+                            }
+
+                            s64 insertSize;
+                            if (((insertSize = record->core.isize) > 0) && (insertSize < InsertSize_Median_Estimate_Histogram_Size)) ++hist->hist[insertSize];
+                            
+                            stats->totalReadLength += (u64)record->core.l_qseq;
+                            ++stats->totalAlignments;
+
+                            if (PassFilter(BAM_FUNMAP)) ++stats->totalUnM;
+                            if (PassFilter(BAM_FDUP)) ++stats->totalDup;
+                            if (PassFilter(BAM_FQCFAIL)) ++stats->totalQCF;
 
                             if (!PassFilter(BAM_FUNMAP | BAM_FDUP | BAM_FQCFAIL))
                             {
@@ -392,12 +434,16 @@ LinkStats(link_stats_run_args *args)
                 {
                     runState = 1;
 
+                    {
+                        TraverseLinkedList(WavlTreeFreezeToLL(insertsizeHists))  WavlTreeFindNode(workingSet, basicStats, node->key)->value->medianInsertSize = EstimateMedian(node->value);
+                    }
+                    
                     Log("\nGenome Length: %$" PRIu64 "bp\n", genomeLength);
                     TraverseLinkedList(WavlTreeFreezeToLL(basicStats))
                     {
                         basic_stats *stats = node->value;
                         Log("%s:", charU64String(node->key));
-                        Log("\t%$" PRIu64 " inserts", stats->insertSizes.count);
+                        Log("\t%$" PRIu64 "bp median insert size", stats->medianInsertSize);
                         Log("\t%$" PRIu64 "bp total read length", stats->totalReadLength);
                         Log("\t%$" PRIu64 " alignments", stats->totalAlignments);
                         Log("\t%$" PRIu64 " unmapped", stats->totalUnM);

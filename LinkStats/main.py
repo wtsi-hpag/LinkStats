@@ -33,7 +33,6 @@ from io import StringIO
 from itertools import chain, groupby, tee
 from pathlib import Path
 from threading import Thread
-from typing import List
 
 import click as ck
 import matplotlib as mpl
@@ -294,30 +293,8 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
     def GetAllStatsFromAFs():
         @dataclass(frozen=True, eq=True)
-        class Molecule:
-            n_reads: int
-            mi: int
-            total_mapping_quality: int
-            min: int
-            max: int
-            total_read_len: int
-            bx: str
-            ref: str
-
-            def __len__(self):
-                return max(0, self.max - self.min)
-
-            @property
-            def mean_mapq(self):
-                return self.total_mapping_quality / self.n_reads
-
-            @property
-            def mean_read_depth(self):
-                return self.total_read_len / len(self)
-
-        @dataclass(frozen=True, eq=True)
         class BasicStats:
-            insert_sizes: List[int]
+            median_insert_size: int
             total_read_length: int
             total_alignments: int
             total_dup: int
@@ -427,7 +404,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                                 )
                             )
                             + (
-                                np.median(bs.insert_sizes),
+                                bs.median_insert_size,
                                 bs.total_read_length / genome_length,
                             )
                             + tuple(

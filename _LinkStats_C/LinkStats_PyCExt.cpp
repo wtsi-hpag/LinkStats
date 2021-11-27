@@ -47,10 +47,7 @@ static
 PyObject *
 BasicStatsToTuple (basic_stats *stats)
 {
-    PyObject *insertSizes = PyTuple_New((Py_ssize_t)stats->insertSizes.count);
-    TraverseLinkedList(stats->insertSizes.head) PyTuple_SET_ITEM(insertSizes, (Py_ssize_t)index, PyLong_FromUnsignedLongLong(node->data));
-
-    return PyTuple_Pack(9, insertSizes, PyLong_FromUnsignedLongLong(stats->totalReadLength), PyLong_FromUnsignedLongLong(stats->totalAlignments), PyLong_FromUnsignedLongLong(stats->totalDup), PyLong_FromUnsignedLongLong(stats->totalQCF), PyLong_FromUnsignedLongLong(stats->totalUnM), PyLong_FromUnsignedLongLong(stats->totalNoMI), PyLong_FromUnsignedLongLong(stats->totalNoBX), PyLong_FromUnsignedLongLong(stats->totalZeroMQ));
+    return PyTuple_Pack(9, PyLong_FromUnsignedLongLong(stats->medianInsertSize), PyLong_FromUnsignedLongLong(stats->totalReadLength), PyLong_FromUnsignedLongLong(stats->totalAlignments), PyLong_FromUnsignedLongLong(stats->totalDup), PyLong_FromUnsignedLongLong(stats->totalQCF), PyLong_FromUnsignedLongLong(stats->totalUnM), PyLong_FromUnsignedLongLong(stats->totalNoMI), PyLong_FromUnsignedLongLong(stats->totalNoBX), PyLong_FromUnsignedLongLong(stats->totalZeroMQ));
 }
 
 static

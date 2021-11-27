@@ -55,8 +55,8 @@ main(s32 numCLIArgs, const char **cliArgs)
         {
             basic_stats *stats = node->value;
             printf("%s:\n", charU64String(node->key));
-            printf("\t%" PRIu64 " inserts\n", stats->insertSizes.count);
-            printf("\t%" PRIu64 " total read length\n", stats->totalReadLength);
+            printf("\t%" PRIu64 "bp median insert size\n", stats->medianInsertSize);
+            printf("\t%" PRIu64 "bp total read length\n", stats->totalReadLength);
             printf("\t%" PRIu64 " alignments\n", stats->totalAlignments);
             printf("\t%" PRIu64 " unmapped\n", stats->totalUnM);
             printf("\t%" PRIu64 " duplicates\n", stats->totalDup);

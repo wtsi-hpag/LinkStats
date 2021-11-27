@@ -29,7 +29,7 @@ SOFTWARE.
 struct
 basic_stats
 {
-    ll<u64> insertSizes;
+    u64 medianInsertSize;
     u64 totalReadLength;
     u64 totalAlignments;
     u64 totalDup;
