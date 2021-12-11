@@ -94,12 +94,16 @@ FillCBTask(void *in)
         bam1_t *record = data->buffer->records + head;
         bam_set_mempolicy(record, BAM_USER_OWNS_STRUCT | BAM_USER_OWNS_DATA);
 
-        if ((BufferSize - bHead) < AlignmentMemory) bHead = 0;
+        if ((BufferSize - bHead) < AlignmentMemory)
+        {
+            while (!data->buffer->bufferTail) {}
+            bHead = 0;
+        }
         u32 freeMem;
         do
         {
             u32 bTail = (u32)data->buffer->bufferTail;
-            freeMem = (((bHead < bTail) ? bTail : BufferSize) - bHead) & (~7U);
+            freeMem = (((bHead < bTail) ? (bTail - 1) : BufferSize) - bHead) & (~7U);
         } while (freeMem < AlignmentMemory);
 
         record->data = data->buffer->dataBuffer + bHead;
