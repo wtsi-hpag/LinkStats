@@ -118,6 +118,81 @@ MakeCopy(memory_arena *arena, s32 *id, s32 **out)
     *out = tmp;
 }
 
+insertsize_histogram *
+NewInsertSizeHistogram(memory_arena *arena)
+{
+    insertsize_histogram *hist = PushStructP(arena, insertsize_histogram);
+    memset(hist, 0, sizeof(*hist));
+    
+    return hist;
+}
 
+u64
+EstimateMedian(insertsize_histogram *hist)
+{
+    s64 count = 0;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size) count += (s64)hist->hist[index];
+    count /= 2;
+    u64 result;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size)
+    {
+        result = (u64)index;
+        count -= (s64)hist->hist[index];
+        if (count <= 0) break;
+    }
 
+    return result;
+}
 
+bit_array *
+CreateBitArray(u64 size, memory_arena *arena)
+{
+   bit_array *array = PushStructP(arena, bit_array);
+   array->size = size;
+   
+   u64 nBytes = (size + 7) >> 3;
+   array->bits = PushArrayP(arena, u08, nBytes);
+   memset(array->bits, 0, nBytes);
+   
+   return array;
+}
+
+void
+FillBitArray(bit_array *array, u64 from, u64 to)
+{
+   for (    u64 idx = from;
+            idx < Min(to, array->size);
+            ++idx )
+      array->bits[idx >> 3] |= (1 << (idx & 7));
+}
+
+u08
+IsBitSet(bit_array *array, u64 pos)
+{
+   return array->bits[pos >> 3] & (1 << (pos & 7));
+}
+
+ll<u64> *
+FindGaps(bit_array *array, memory_arena *arena)
+{
+   ll<u64> *list;
+   NewLL(arena, &list);
+
+   u08 state1 = IsBitSet(array, 0);
+   u64 len = 1;
+   for (    u64 idx = 1;
+            idx < array->size;
+            ++idx )
+   {
+      u08 state2 = IsBitSet(array, idx);
+
+      if (state1 && !state2) len = 0;
+      else if (!state1 && state2) LLAddValue(list, len, arena);
+      
+      state1 = state2;
+      ++len;
+   }
+   if (!state1) LLAddValue(list, len, arena);
+
+   return list;
+}

@@ -69,9 +69,8 @@ cb_fill_thread_data
     volatile u08 threadRunning;
 };
 
-#define SAM_Data_Not_Sorted_Int -2147483648
-#define SAM_Data_Not_Sorted_VoidPtr ((void *)2)
-#define SAM_Data_Read_Error_VoidPtr ((void *)1)
+#define SAM_Data_Not_Sorted ((void *)1)
+#define SAM_Data_Read_Error ((void *)2)
 
 global_function
 void *
@@ -84,7 +83,8 @@ FillCBTask(void *in)
     
     u64 currPos = 0;
     s32 currTid = 0;
-    
+    u08 isSorted = 1;
+
     s32 readState;
     do
     {
@@ -114,15 +114,15 @@ FillCBTask(void *in)
             if ((recTid = (s32)record->core.tid) >= 0)
             {
                 u64 recPos = (u64)record->core.pos;
-                if ((recTid < currTid) || ((recTid == currTid) && (recPos < currPos))) readState = SAM_Data_Not_Sorted_Int; 
+                isSorted = (recTid > currTid) || ((recTid == currTid) && (recPos >= currPos)); 
                 currPos = recPos;
                 currTid = recTid;
             }
         }
-    } while (readState >= 0);
+    } while (isSorted && (readState >= 0));
 
     data->threadRunning = 0;
-    pthread_exit(readState == SAM_Data_Not_Sorted_Int ? SAM_Data_Not_Sorted_VoidPtr : (readState < -1 ? SAM_Data_Read_Error_VoidPtr : 0));
+    pthread_exit(isSorted ? (readState < -1 ? SAM_Data_Read_Error : 0) : SAM_Data_Not_Sorted);
 }
 
 global_function
@@ -155,7 +155,9 @@ UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s3
     u32 recReadLen = (u32)record->core.l_qseq; 
     u32 recQual = (u32)record->core.qual;
 
-    if (!molecules->count || ((recMin > molMax) && ((recMin - molMax) >= groupCutOffDis)))
+    u64 gap = (recMin > molMax) ? recMin - molMax : 0; 
+
+    if (!molecules->count || (gap >= groupCutOffDis))
     {
         molecule *newMol = PushStructP(arena, molecule);
         newMol->minCoord = recMin;
@@ -170,6 +172,8 @@ UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s3
         }
         else newMol->haveMI = 0;
         
+        NewLL(arena, &newMol->gaps);
+
         LLAddValue(molecules, newMol, arena);
     }
     else
@@ -180,42 +184,9 @@ UpdateMolecule(u64 groupCutOffDis, ll<molecule *> *molecules, bam1_t *record, s3
         mol->totalMappingQuality += recQual;
         if (mol->haveMI && (!mi || *mi != mol->mi)) mol->haveMI = 0;
         ++mol->nReads;
+
+        if (gap) LLAddValue(mol->gaps, gap, arena);
     }
-}
-
-#define InsertSize_Median_Estimate_Histogram_Size 2048
-struct
-insertsize_histogram
-{
-    u64 hist[InsertSize_Median_Estimate_Histogram_Size];
-};
-
-global_function
-insertsize_histogram *
-NewInsertSizeHistogram(memory_arena *arena)
-{
-    insertsize_histogram *hist = PushStructP(arena, insertsize_histogram);
-    memset(hist, 0, sizeof(*hist));
-    
-    return hist;
-}
-
-global_function
-u64
-EstimateMedian(insertsize_histogram *hist)
-{
-    s64 count = 0;
-    ForLoop(InsertSize_Median_Estimate_Histogram_Size) count += (s64)hist->hist[index];
-    count /= 2;
-    u64 result;
-    ForLoop(InsertSize_Median_Estimate_Histogram_Size)
-    {
-        result = (u64)index;
-        count -= (s64)hist->hist[index];
-        if (count <= 0) break;
-    }
-
-    return result;
 }
 
 link_stats_return_data *
@@ -273,8 +244,14 @@ LinkStats(link_stats_run_args *args)
     InitialiseWavlTree(workingSet, &moleculeData);
 
     u64 genomeLength = 0;
+    
     ll<u64_string *> *refNames;
     NewLL(workingSet, &refNames); 
+
+    wavl_tree<u64_string, wavl_tree<s32, bit_array>> *coverage;
+    InitialiseWavlTree(workingSet, &coverage);
+    wavl_tree<u64_string, wavl_tree<s32, ll<u64>>> *coverageGaps;
+    InitialiseWavlTree(workingSet, &coverageGaps);
 
     htsThreadPool threadPool = {0, (s32)(numThreads - 2)};
     htsFile *samFile = 0;
@@ -290,8 +267,9 @@ LinkStats(link_stats_run_args *args)
         {
             ForLoop((u32)header->n_targets) 
             {
-                genomeLength += (u64)sam_hdr_tid2len(header, (s32)index);
-                LLAddValue(refNames, PushU64String((char *)sam_hdr_tid2name(header, (s32)index), workingSet), workingSet);
+                s32 idx = (s32)index;
+                genomeLength += (u64)sam_hdr_tid2len(header, idx);
+                LLAddValue(refNames, PushU64String((char *)sam_hdr_tid2name(header, idx), workingSet), workingSet);
             }
 
             circular_buffer *cBuffer = PushStructP(workingSet, circular_buffer);
@@ -355,7 +333,7 @@ LinkStats(link_stats_run_args *args)
                                 auto *node = WavlTreeFindNode(workingSet, insertsizeHists, id);
                                 if (!(hist = node->value)) node->value = hist = NewInsertSizeHistogram(workingSet);
                             }
-
+                            
                             s64 insertSize;
                             if (((insertSize = record->core.isize) > 0) && (insertSize < InsertSize_Median_Estimate_Histogram_Size)) ++hist->hist[insertSize];
                             
@@ -387,7 +365,19 @@ LinkStats(link_stats_run_args *args)
                                 if (!bx) ++stats->totalNoBX;
                                 if (!mi) ++stats->totalNoMI;
                                 if (!record->core.qual) ++stats->totalZeroMQ;
-
+                                else
+                                {
+                                    bit_array *cov;
+                                    {
+                                        auto *node1 = WavlTreeFindNode(workingSet, coverage, id);
+                                        if (!node1->value) InitialiseWavlTree(workingSet, &node1->value);
+                                        auto *node2 = WavlTreeFindNode(workingSet, node1->value, &record->core.tid);
+                                        if (!(cov = node2->value)) node2->value = cov = CreateBitArray((u64)sam_hdr_tid2len(header, record->core.tid), workingSet);
+                                    }
+                                    
+                                    FillBitArray(cov, (u64)record->core.pos, (u64)bam_endpos(record));
+                                }
+                                
                                 if (record->core.qual && bx && (useMI ? mi : (s32 *)1))
                                 {
                                     auto *node1 = WavlTreeFindNode(workingSet, moleculeData, id);
@@ -428,7 +418,7 @@ LinkStats(link_stats_run_args *args)
                 if (pthread_join(readingThread, &fileReadError) || fileReadError)
                 {
                     Log("Read error");
-                    if (fileReadError == SAM_Data_Not_Sorted_VoidPtr) goto NotSorted;
+                    if (fileReadError == SAM_Data_Not_Sorted) goto NotSorted;
                 }
                 else
                 {
@@ -438,6 +428,15 @@ LinkStats(link_stats_run_args *args)
                         TraverseLinkedList(WavlTreeFreezeToLL(insertsizeHists))  WavlTreeFindNode(workingSet, basicStats, node->key)->value->medianInsertSize = EstimateMedian(node->value);
                     }
                     
+                    {
+                        TraverseLinkedList(WavlTreeFreezeToLL(coverage))
+                        {
+                            auto *node3 = WavlTreeFindNode(workingSet, coverageGaps, node->key);
+                            InitialiseWavlTree(workingSet, &node3->value);
+                            TraverseLinkedList2(WavlTreeFreezeToLL(node->value)) WavlTreeFindNode(workingSet, node3->value, node2->key)->value = FindGaps(node2->value, workingSet);
+                        }
+                    }
+
                     Log("\nGenome Length: %$" PRIu64 "bp\n", genomeLength);
                     TraverseLinkedList(WavlTreeFreezeToLL(basicStats))
                     {
@@ -476,6 +475,7 @@ NotSorted:
         returnData->refNames = refNames;
         returnData->basicStats = basicStats;
         returnData->moleculeData = moleculeData;
+        returnData->coverageGaps = coverageGaps;
     }
 
     return returnData;

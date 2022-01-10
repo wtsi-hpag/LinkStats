@@ -306,3 +306,25 @@ LLAddValue(ll<t> *list, t data, memory_arena *arena)
     list->tail = (list->tail->next = newNode); 
     ++list->count; 
 }
+
+#define InsertSize_Median_Estimate_Histogram_Size 2048
+struct
+insertsize_histogram
+{
+    u64 hist[InsertSize_Median_Estimate_Histogram_Size];
+};
+
+insertsize_histogram *NewInsertSizeHistogram(memory_arena *arena);
+u64 EstimateMedian(insertsize_histogram *hist);
+
+struct
+bit_array
+{
+   u08 *bits;
+   u64 size;
+};
+
+bit_array *CreateBitArray(u64 size, memory_arena *arena);
+void FillBitArray(bit_array *array, u64 from, u64 to);
+u08 IsBitSet(bit_array *array, u64 pos);
+ll<u64> *FindGaps(bit_array *array, memory_arena *arena);
