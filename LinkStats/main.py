@@ -176,8 +176,19 @@ MOL_DATA_HEADER = (
     "Reference",
     "Mean Read Depth",
     "Mean MapQ",
+    "No. Gaps",
+    "Mean Gap Size",
+    "Max Gap Size",
 )
-HIST_DATA_HEADER = ("PDF", "CDF", "Molecule Length", "Sample Name", "Min No. Reads")
+COV_DATA_HEADER = ("Sample Name", "Reference", "Gap Length")
+MOL_LEN_HIST_DATA_HEADER = (
+    "PDF",
+    "CDF",
+    "Molecule Length",
+    "Sample Name",
+    "Min No. Reads",
+)
+COV_GAP_HIST_DATA_HEADER = ("PDF", "CDF", "Coverage Gap Length", "Sample Name")
 
 
 def ReadCSV(path, header):
@@ -196,7 +207,9 @@ class CallBack:
     class Types(Enum):
         AF = auto()
         MD = auto()
-        HD = auto()
+        CD = auto()
+        MLHD = auto()
+        CGHD = auto()
         CP = auto()
         PP = auto()
 
@@ -212,8 +225,12 @@ class CallBack:
         return self.cb_type == self.Types.MD
 
     @property
-    def is_HD(self):
-        return self.cb_type == self.Types.HD
+    def is_MLHD(self):
+        return self.cb_type == self.Types.MLHD
+
+    @property
+    def is_CGHD(self):
+        return self.cb_type == self.Types.CGHD
 
     @property
     def is_CP(self):
@@ -222,6 +239,10 @@ class CallBack:
     @property
     def is_PP(self):
         return self.cb_type == self.Types.PP
+
+    @property
+    def is_CD(self):
+        return self.cb_type == self.Types.CD
 
 
 class AlignmentFile(CallBack):
@@ -251,9 +272,19 @@ class MoleculeData(Data):
         super().__init__(file, self.Types.MD)
 
 
-class HistData(Data):
+class CoverageData(Data):
     def __init__(self, file):
-        super().__init__(file, self.Types.HD)
+        super().__init__(file, self.Types.CD)
+
+
+class MolLenHistData(Data):
+    def __init__(self, file):
+        super().__init__(file, self.Types.MLHD)
+
+
+class CovGapHistData(Data):
+    def __init__(self, file):
+        super().__init__(file, self.Types.CGHD)
 
 
 class Prefix(CallBack):
@@ -264,15 +295,25 @@ class Prefix(CallBack):
 
 
 class CSVPrefix(Prefix):
-    def __init__(self, prefix, save_summ, save_mol, save_hist):
+    def __init__(
+        self, prefix, save_summ, save_mol, save_cov, save_mol_hist, save_cov_hist
+    ):
         super().__init__(prefix, self.Types.CP)
         self.save_summ = save_summ
         self.save_mol = save_mol
-        self.save_hist = save_hist
+        self.save_cov = save_cov
+        self.save_mol_hist = save_mol_hist
+        self.save_cov_hist = save_cov_hist
 
     @property
     def any_set(self):
-        return self.save_summ or self.save_mol or self.save_hist
+        return (
+            self.save_summ
+            or self.save_mol
+            or self.save_cov
+            or self.save_mol_hist
+            or self.save_cov_hist
+        )
 
 
 class PlotPrefix(Prefix):
@@ -288,7 +329,7 @@ def ConcatDF(it):
     return pd.concat(iter_then_empty(), ignore_index=True)
 
 
-def GetAllStats(alignment_files, molecular_data, min_reads, threads):
+def GetAllStats(alignment_files, molecular_data, coverage_data, min_reads, threads):
     alignment_files = tuple(alignment_files)
 
     def GetAllStatsFromAFs():
@@ -306,7 +347,13 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
         def ReadSAM(alignment_file, threads):
             with LoggerHandle(id=f"Read {alignment_file.stem_name}") as handles:
-                genome_length, ref_names, basic_stats, molecule_data = sam_parser(
+                (
+                    genome_length,
+                    ref_names,
+                    basic_stats,
+                    molecule_data,
+                    coverage_gaps,
+                ) = sam_parser(
                     log=handles.info,
                     error=handles.error,
                     num_threads=threads,
@@ -325,10 +372,16 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                     (name, tuple((ref_names[tid], t2) for tid, t2 in t1))
                     for name, t1 in molecule_data
                 ),
+                tuple(
+                    (name, tuple((ref_names[tid], t2) for tid, t2 in t1))
+                    for name, t1 in coverage_gaps
+                ),
             )
 
         def GetStats(alignment_file, threads):
-            genome_length, basic_stats, molecule_data = ReadSAM(alignment_file, threads)
+            genome_length, basic_stats, molecule_data, coverage_gaps = ReadSAM(
+                alignment_file, threads
+            )
 
             molecule_data = pd.DataFrame(
                 (
@@ -341,13 +394,26 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                         reference_name,
                         total_read_length / max(1, pos_max - pos_min),
                         total_mapping_quality / n_reads,
+                        len(gaps),
+                        np.mean(gaps) if len(gaps) > 0 else 0,
+                        max(gaps) if len(gaps) > 0 else 0,
                     )
                     for name, a in molecule_data
                     for reference_name, b in a
                     for (bx, _), c in b
-                    for n_reads, mi, total_mapping_quality, pos_min, pos_max, total_read_length in c
+                    for n_reads, mi, total_mapping_quality, pos_min, pos_max, total_read_length, gaps in c
                 ),
                 columns=MOL_DATA_HEADER,
+            )
+
+            coverage_data = pd.DataFrame(
+                (
+                    (name, reference_name, c)
+                    for name, a in coverage_gaps
+                    for reference_name, b in a
+                    for c in b
+                ),
+                columns=COV_DATA_HEADER,
             )
 
             def n_stats(data, ns):
@@ -360,6 +426,7 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
 
             return (
                 molecule_data,
+                coverage_data,
                 pd.DataFrame(
                     (
                         (
@@ -478,33 +545,46 @@ def GetAllStats(alignment_files, molecular_data, min_reads, threads):
                 alignment_files,
             )
 
-    def GetAllStatsFromCSVs():
-        mol_files = tuple(mol.file for mol in molecular_data)
+    def GetAllStatsFromCSVs(data, name, header):
+        files = tuple(mol.file for mol in data)
 
         return (
             iter(
                 tqdm_map(
-                    partial(ReadCSV, header=MOL_DATA_HEADER),
-                    mol_files,
+                    partial(ReadCSV, header=header),
+                    files,
                     max_workers=threads,
-                    desc="Read CSVs (molecular data)",
+                    desc=f"Read CSVs ({name})",
                     unit=" CSV files",
                     unit_scale=True,
                 )
             )
-            if len(mol_files) > 0
+            if len(files) > 0
             else ()
         )
 
     summary_dfs = []
+    cov_dfs = []
 
     def yield_all():
-        for df, summ_df in GetAllStatsFromAFs():
+        for df, cov_df, summ_df in GetAllStatsFromAFs():
             summary_dfs.append(summ_df)
+            cov_dfs.append(cov_df)
             yield df
-        yield from GetAllStatsFromCSVs()
+        yield from GetAllStatsFromCSVs(
+            molecular_data, "molecular data", MOL_DATA_HEADER
+        )
 
-    return ConcatDF(yield_all()), ConcatDF(summary_dfs)
+    return (
+        ConcatDF(yield_all()),
+        ConcatDF(
+            chain(
+                cov_dfs,
+                GetAllStatsFromCSVs(coverage_data, "coverage data", COV_DATA_HEADER),
+            )
+        ),
+        ConcatDF(summary_dfs),
+    )
 
 
 def GetAllMolLenHists(df, hist_data, min_reads, threads):
@@ -555,7 +635,7 @@ def GetAllMolLenHists(df, hist_data, min_reads, threads):
                         for n in min_reads
                     ),
                     max_workers=threads,
-                    desc="Generate Histogram Data",
+                    desc="Generate Molecule Length Histogram Data",
                     unit=" Data-Sets",
                     unit_scale=True,
                 )
@@ -566,10 +646,76 @@ def GetAllMolLenHists(df, hist_data, min_reads, threads):
         yield from (
             iter(
                 tqdm_map(
-                    partial(ReadCSV, header=HIST_DATA_HEADER),
+                    partial(ReadCSV, header=MOL_LEN_HIST_DATA_HEADER),
                     hist_files,
                     max_workers=threads,
-                    desc="Read CSVs (histogram data)",
+                    desc="Read CSVs (molecule length histogram data)",
+                    unit=" CSV files",
+                    unit_scale=True,
+                )
+            )
+            if len(hist_files) > 0
+            else ()
+        )
+
+    return ConcatDF(yield_all())
+
+
+def GetAllCovGapHists(df, hist_data, threads):
+    def GetMolLenHist(sample_name):
+        MAX_BINS = 1024
+
+        data = df[(df["Sample Name"] == sample_name)]["Gap Length"]
+        prob, length = np.histogram(
+            data,
+            bins=np.interp(
+                np.linspace(
+                    0,
+                    len(data),
+                    np.clip(
+                        len(np.histogram_bin_edges(data, bins="auto")) - 1, 1, MAX_BINS
+                    )
+                    + 1,
+                ),
+                np.arange(len(data)),
+                np.sort(data),
+            ),
+            density=True,
+        )
+
+        select = ~np.isnan(prob)
+
+        return pd.DataFrame(
+            {
+                "PDF": prob[select],
+                "CDF": np.cumsum(prob[select]) / prob[select].sum(),
+                "Coverage Gap Length": ((length[:-1] + length[1:]) / 2)[select],
+                "Sample Name": sample_name,
+            }
+        )
+
+    def yield_all():
+        if df.shape[0] > 0:
+            yield from iter(
+                tqdm_map(
+                    GetMolLenHist,
+                    tuple(df["Sample Name"].unique()),
+                    max_workers=threads,
+                    desc="Generate Coverage Gap Histogram Data",
+                    unit=" Data-Sets",
+                    unit_scale=True,
+                )
+            )
+
+        hist_files = tuple(hist.file for hist in hist_data)
+
+        yield from (
+            iter(
+                tqdm_map(
+                    partial(ReadCSV, header=COV_GAP_HIST_DATA_HEADER),
+                    hist_files,
+                    max_workers=threads,
+                    desc="Read CSVs (coverage gap histogram data)",
                     unit=" CSV files",
                     unit_scale=True,
                 )
@@ -690,14 +836,42 @@ def molecule_data(file):
 @ck.argument("file", type=ck.Path(readable=True, path_type=Path))
 @documenter(
     """
+Read in coverage gap data from a CSV FILE.
+
+\b
+Use to re-calculate histogram data.
+"""
+)
+def coverage_data(file):
+    return CoverageData(file=file)
+
+
+@cli.command()
+@ck.argument("file", type=ck.Path(readable=True, path_type=Path))
+@documenter(
+    """
 Read in molecule length histogram data from a CSV FILE.
 
 \b
 Use to re-generate or create combined plots.
 """
 )
-def hist_data(file):
-    return HistData(file=file)
+def mol_len_hist_data(file):
+    return MolLenHistData(file=file)
+
+
+@cli.command()
+@ck.argument("file", type=ck.Path(readable=True, path_type=Path))
+@documenter(
+    """
+Read in coverage gap histogram data from a CSV FILE.
+
+\b
+Use to re-generate or create combined plots.
+"""
+)
+def cov_gap_hist_data(file):
+    return CovGapHistData(file=file)
 
 
 @cli.command()
@@ -709,7 +883,17 @@ def hist_data(file):
     "--mol/--no-mol", default=False, help="Save molecule data table. Default=False."
 )
 @ck.option(
-    "--hist/--no-hist", default=False, help="Save histogram data table. Default=False."
+    "--cov/--no-cov", default=False, help="Save coverage data table. Default=False."
+)
+@ck.option(
+    "--mol-hist/--no-mol-hist",
+    default=False,
+    help="Save molecular-length histogram data table. Default=False.",
+)
+@ck.option(
+    "--cov-hist/--no-cov-hist",
+    default=False,
+    help="Save coverage-gap histogram data table. Default=False.",
 )
 @documenter(
     """
@@ -719,8 +903,15 @@ Saves summary, molecule or histogram data to CSV files at PREFIX_.
 By default, only summary data is saved.
 """
 )
-def save_csvs(prefix, summ, mol, hist):
-    return CSVPrefix(prefix, save_summ=summ, save_mol=mol, save_hist=hist)
+def save_csvs(prefix, summ, mol, cov, mol_hist, cov_hist):
+    return CSVPrefix(
+        prefix,
+        save_summ=summ,
+        save_mol=mol,
+        save_cov=cov,
+        save_mol_hist=mol_hist,
+        save_cov_hist=cov_hist,
+    )
 
 
 @cli.command()
@@ -773,9 +964,10 @@ def run(callbacks, threads, min_reads):
     if not (csv or plot):
         Error("Neither CSV nor Plot prefix specified, nothing to do")
 
-    all_data, summary_data = GetAllStats(
+    mol_data, cov_data, summary_data = GetAllStats(
         (af for af in callbacks if af.is_AF),
         (md for md in callbacks if md.is_MD),
+        (cd for cd in callbacks if cd.is_CD),
         min_reads,
         threads,
     )
@@ -786,11 +978,17 @@ def run(callbacks, threads, min_reads):
             LOGGER.info(line)
         LOGGER.info("")
 
-    hist_data = (
+    mol_hist_data = (
         GetAllMolLenHists(
-            all_data, (hd for hd in callbacks if hd.is_HD), min_reads, threads
+            mol_data, (hd for hd in callbacks if hd.is_MLHD), min_reads, threads
         )
-        if ((csv and csv.save_hist) or plot)
+        if ((csv and csv.save_mol_hist) or plot)
+        else None
+    )
+
+    cov_hist_data = (
+        GetAllCovGapHists(cov_data, (hd for hd in callbacks if hd.is_CGHD), threads)
+        if ((csv and csv.save_cov_hist) or plot)
         else None
     )
 
@@ -820,13 +1018,23 @@ def run(callbacks, threads, min_reads):
                             else ()
                         )
                         + (
-                            ((all_data, "molecular_data.csv.bz2"),)
+                            ((mol_data, "molecular_data.csv.bz2"),)
                             if csv.save_mol
                             else ()
                         )
                         + (
-                            ((hist_data, "molecular_length_histograms.csv.bz2"),)
-                            if csv.save_hist
+                            ((cov_data, "coverage_data.csv.bz2"),)
+                            if csv.save_cov
+                            else ()
+                        )
+                        + (
+                            ((mol_hist_data, "molecular_length_histograms.csv.bz2"),)
+                            if csv.save_mol_hist
+                            else ()
+                        )
+                        + (
+                            ((cov_hist_data, "coverage_gap_histograms.csv.bz2"),)
+                            if csv.save_cov_hist
                             else ()
                         )
                     ),
@@ -841,40 +1049,74 @@ def run(callbacks, threads, min_reads):
         plot.parent.mkdir(parents=True, exist_ok=True)
         get_path = partial(base_get_path, prefix=plot)
 
-        def save_plots(col, hue, n, typ):
-            name = get_path(f"molecular_length_{typ}s_{n}.png")
-            sb.relplot(
-                kind="line",
-                data=hist_data,
-                col=col,
-                hue=hue,
-                x="Molecule Length",
-                y=typ,
-            ).set(xscale="log", yscale=("log" if typ == "PDF" else "linear")).savefig(
-                name,
-                dpi=200,
-                bbox_inches="tight",
-            )
-            return name
+        if mol_hist_data.shape[0] > 0:
 
-        generated.append(
-            (
-                save_plots(col, hue, i + 1, typ)
-                for i, col, hue, typ in tqdm(
-                    tuple(
-                        (i, col, hue, typ)
-                        for i, (col, hue) in enumerate(
-                            (col, hue)
-                            for colhue in (("Sample Name", "Min No. Reads"),)
-                            for col, hue in (colhue, colhue[::-1])
-                        )
-                        for typ in ("PDF", "CDF")
-                    ),
-                    desc="Saving Plots",
-                    unit=" Plots",
+            def save_mol_plots(col, hue, n, typ):
+                name = get_path(f"molecular_length_{typ}s_{n}.png")
+                sb.relplot(
+                    kind="line",
+                    data=mol_hist_data,
+                    col=col,
+                    hue=hue,
+                    x="Molecule Length",
+                    y=typ,
+                ).set(
+                    xscale="log", yscale=("log" if typ == "PDF" else "linear")
+                ).savefig(
+                    name,
+                    dpi=200,
+                    bbox_inches="tight",
+                )
+                return name
+
+            generated.append(
+                (
+                    save_mol_plots(col, hue, i + 1, typ)
+                    for i, col, hue, typ in tqdm(
+                        tuple(
+                            (i, col, hue, typ)
+                            for i, (col, hue) in enumerate(
+                                (col, hue)
+                                for colhue in (("Sample Name", "Min No. Reads"),)
+                                for col, hue in (colhue, colhue[::-1])
+                            )
+                            for typ in ("PDF", "CDF")
+                        ),
+                        desc="Saving Molecular Length Plots",
+                        unit=" Plots",
+                    )
                 )
             )
-        )
+
+        if cov_hist_data.shape[0] > 0:
+
+            def save_cov_plots(typ):
+                name = get_path(f"coverage_gap_{typ}s.png")
+                sb.relplot(
+                    kind="line",
+                    data=cov_hist_data,
+                    hue="Sample Name",
+                    x="Coverage Gap Length",
+                    y=typ,
+                ).set(
+                    xscale="log", yscale=("log" if typ == "PDF" else "linear")
+                ).savefig(
+                    name,
+                    dpi=200,
+                    bbox_inches="tight",
+                )
+                return name
+
+            generated.append(
+                (
+                    save_cov_plots(typ)
+                    for typ in tqdm(
+                        ("PDF", "CDF"),
+                        desc="Saving Coverage Gap Plots",
+                        unit=" Plots",
+                    )
+                )
+            )
 
     generated = tuple(("\t" + str(n)) for n in chain.from_iterable(generated))
 

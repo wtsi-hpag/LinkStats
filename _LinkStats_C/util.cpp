@@ -1,24 +1,24 @@
 /*
-Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited
+   Copyright (c) 2021 Ed Harry, Wellcome Sanger Institute, Genome Research Limited
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+   */
 
 #include "util.hpp"
 
@@ -84,7 +84,7 @@ charU64String(u64_string *string)
 void
 MakeCopy(memory_arena *arena, u64_string *string, u64_string **out)
 {
-   *out = string;
+    *out = string;
 }
 
 bool
@@ -118,6 +118,100 @@ MakeCopy(memory_arena *arena, s32 *id, s32 **out)
     *out = tmp;
 }
 
+insertsize_histogram *
+NewInsertSizeHistogram(memory_arena *arena)
+{
+    insertsize_histogram *hist = PushStructP(arena, insertsize_histogram);
+    memset(hist, 0, sizeof(*hist));
 
+    return hist;
+}
 
+u64
+EstimateMedian(insertsize_histogram *hist)
+{
+    s64 count = 0;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size) count += (s64)hist->hist[index];
+    count /= 2;
+    u64 result;
+    ForLoop(InsertSize_Median_Estimate_Histogram_Size)
+    {
+        result = (u64)index;
+        count -= (s64)hist->hist[index];
+        if (count <= 0) break;
+    }
 
+    return result;
+}
+
+bit_array *
+CreateBitArray(u64 size, memory_arena *arena)
+{
+    bit_array *array = PushStructP(arena, bit_array);
+    array->size = size;
+
+    u64 nBytes = (size + 7) >> 3;
+    array->bits = PushArrayP(arena, u08, nBytes);
+    memset(array->bits, 0, nBytes);
+
+    return array;
+}
+
+void
+FillBitArray(bit_array *array, u64 from, u64 to)
+{
+    u64 idx;
+
+    for (   idx = from;
+            idx < Min(((from + 7) & ~7), array->size);
+            ++idx )
+        array->bits[idx >> 3] |= (1 << (idx & 7));
+
+    u64 nBytesToFill = Min((to >> 3), (array->size >> 3)) - (idx >> 3);
+    memset(array->bits + (idx >> 3), 255, nBytesToFill);
+
+    for (   idx += (nBytesToFill * 8);
+            idx < Min(to, array->size);
+            ++idx )
+        array->bits[idx >> 3] |= (1 << (idx & 7));
+}
+
+u08
+IsBitSet(bit_array *array, u64 pos)
+{
+    return array->bits[pos >> 3] & (1 << (pos & 7));
+}
+
+ll<u64> *
+FindGaps(bit_array *array, memory_arena *arena)
+{
+    ll<u64> *list;
+    NewLL(arena, &list);
+
+    u08 state1 = (array->bits[0] == 255) ? 1 : (array->bits[0] ? IsBitSet(array, 0) : 0);
+    u64 len = (array->bits[0] == 255) ? 8 : (array->bits[0] ? 1 : 8);
+    
+    for (   u64 idx = len;
+            idx < array->size;
+            ++idx )
+    {
+        if (!(idx & 7) && ((idx >> 3) < (array->size >> 3)) && ((state1 && (array->bits[idx >> 3] == 255)) || (!state1 && !array->bits[idx >> 3])))
+        {
+            len += 8;
+            idx += 7;
+        }
+        else
+        {
+            u08 state2 = IsBitSet(array, idx);
+
+            if (state1 && !state2) len = 0;
+            else if (!state1 && state2) LLAddValue(list, len, arena);
+
+            state1 = state2;
+            ++len;
+        }
+    }
+    if (!state1) LLAddValue(list, len, arena);
+
+    return list;
+}

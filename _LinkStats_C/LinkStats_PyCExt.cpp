@@ -52,6 +52,26 @@ BasicStatsToTuple (basic_stats *stats)
 
 static
 PyObject *
+LLToTuple (ll<u64> *list)
+{
+    PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
+    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyLong_FromUnsignedLongLong(node->data));
+
+    return tuple;
+}
+
+static
+PyObject *
+GapsToTuple (wavl_tree<s32, ll<u64>> *gaps)
+{
+    PyObject *tuple = PyTuple_New((Py_ssize_t)gaps->size);
+    TraverseLinkedList(WavlTreeFreezeToLL(gaps)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyLong_FromLong(*node->key), LLToTuple(node->value)));
+
+    return tuple;
+}
+
+static
+PyObject *
 MoleculeToTuple (ll<molecule *> *list)
 {
     auto None = []()->PyObject*
@@ -60,7 +80,7 @@ MoleculeToTuple (ll<molecule *> *list)
     };
     
     PyObject *tuple = PyTuple_New((Py_ssize_t)list->count);
-    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(6, PyLong_FromUnsignedLong(node->data->nReads), node->data->haveMI ? PyLong_FromLong(node->data->mi) : None(), PyLong_FromUnsignedLong(node->data->totalMappingQuality), PyLong_FromUnsignedLongLong(node->data->minCoord), PyLong_FromUnsignedLongLong(node->data->maxCoord), PyLong_FromUnsignedLong(node->data->totalReadLength)));
+    TraverseLinkedList(list->head) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(7, PyLong_FromUnsignedLong(node->data->nReads), node->data->haveMI ? PyLong_FromLong(node->data->mi) : None(), PyLong_FromUnsignedLong(node->data->totalMappingQuality), PyLong_FromUnsignedLongLong(node->data->minCoord), PyLong_FromUnsignedLongLong(node->data->maxCoord), PyLong_FromUnsignedLong(node->data->totalReadLength), LLToTuple(node->data->gaps)));
 
     return tuple;
 }
@@ -70,7 +90,7 @@ PyObject *
 MoleculeMap2ToTuple (wavl_tree<u64_string, ll<molecule *>> *map2)
 {
     PyObject *tuple = PyTuple_New((Py_ssize_t)map2->size);
-    TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeToTuple(node->value)));
+    TraverseLinkedList(WavlTreeFreezeToLL(map2)) PyTuple_SET_ITEM(tuple, (Py_ssize_t)index, PyTuple_Pack(2, PyTuple_Pack(2, PyUnicode_FromString((const char *)charU64String(node->key)), PyLong_FromLong(node->key->id)), MoleculeToTuple(node->value)));
     
     return tuple;
 }
@@ -174,21 +194,26 @@ Main (PyObject *self, PyObject *args, PyObject *kwargs)
     
     PyObject *refNames = PyTuple_New((Py_ssize_t)data->refNames->count);
     {
-	TraverseLinkedList(data->refNames->head) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, Py_BuildValue("s", (const char *)charU64String(node->data)));
+	TraverseLinkedList(data->refNames->head) PyTuple_SET_ITEM(refNames, (Py_ssize_t)index, PyUnicode_FromString((const char *)charU64String(node->data)));
     }
     
     PyObject *basicStats = PyTuple_New((Py_ssize_t)data->basicStats->size);
     {
-	TraverseLinkedList(WavlTreeFreezeToLL(data->basicStats)) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), BasicStatsToTuple(node->value)));
+	TraverseLinkedList(WavlTreeFreezeToLL(data->basicStats)) PyTuple_SET_ITEM(basicStats, (Py_ssize_t)index, PyTuple_Pack(2, PyUnicode_FromString((const char *)charU64String(node->key)), BasicStatsToTuple(node->value)));
     }
     
     PyObject *moleculeData = PyTuple_New((Py_ssize_t)data->moleculeData->size);
     {
-	TraverseLinkedList(WavlTreeFreezeToLL(data->moleculeData)) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, Py_BuildValue("s", (const char *)charU64String(node->key)), MoleculeMap1ToTuple(node->value)));
+	TraverseLinkedList(WavlTreeFreezeToLL(data->moleculeData)) PyTuple_SET_ITEM(moleculeData, (Py_ssize_t)index, PyTuple_Pack(2, PyUnicode_FromString((const char *)charU64String(node->key)), MoleculeMap1ToTuple(node->value)));
+    }
+
+    PyObject *coverageGaps = PyTuple_New((Py_ssize_t)data->coverageGaps->size);
+    {
+	TraverseLinkedList(WavlTreeFreezeToLL(data->coverageGaps)) PyTuple_SET_ITEM(coverageGaps, (Py_ssize_t)index, PyTuple_Pack(2, PyUnicode_FromString((const char *)charU64String(node->key)), GapsToTuple(node->value)));
     }
 
     FreeMemoryArena(workingSet);
-    return PyTuple_Pack(4, genomeLength, refNames, basicStats, moleculeData); 
+    return PyTuple_Pack(5, genomeLength, refNames, basicStats, moleculeData, coverageGaps); 
 }
 
 static

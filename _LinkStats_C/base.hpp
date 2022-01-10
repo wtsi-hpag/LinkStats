@@ -50,5 +50,6 @@ typedef double f64;
 #define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
 #define ForLoop(n) for (u32 index = 0; index < (n); ++index)
 #define TraverseLinkedList(startNode) u32 index = 0; for (auto *node = (startNode); node; node = node->next, ++index)
+#define TraverseLinkedList2(startNode) u32 index2 = 0; for (auto *node2 = (startNode); node2; node2 = node2->next, ++index2)
 
 #define Pow2(N) (1 << N)

@@ -50,6 +50,7 @@ molecule
     u32 haveMI : 1;
     u32 totalMappingQuality;
     s32 mi;
+    ll<u64> *gaps;
 };
 
 struct
@@ -73,6 +74,7 @@ link_stats_return_data
     ll<u64_string *> *refNames;
     wavl_tree<u64_string, basic_stats> *basicStats;
     wavl_tree<u64_string, wavl_tree<s32, wavl_tree<u64_string, ll<molecule *>>>> *moleculeData;
+    wavl_tree<u64_string, wavl_tree<s32, ll<u64>>> *coverageGaps;
 };
 
 link_stats_return_data *LinkStats(link_stats_run_args *args);
