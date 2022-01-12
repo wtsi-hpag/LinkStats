@@ -29,8 +29,15 @@ from setuptools.command.install import install as setup_install
 
 with Popen("git describe".split(), stdout=PIPE, stderr=sys.stderr, text=True) as proc:
     if proc.wait() != 0:
-        sys.exit("Could not determine version from 'git describe'")
-    VERSION = next(proc.stdout).strip().replace("-", "_")
+        try:
+            with open("version", "r") as vf:
+                VERSION = next(vf).strip().replace("-", "_")
+        except:
+            sys.exit(
+                "Could not determine version from 'git describe' or 'version' file"
+            )
+    else:
+        VERSION = next(proc.stdout).strip().replace("-", "_")
 
 
 LINKSTATS_C = "_LinkStats_C"
@@ -53,10 +60,7 @@ def install_linkstats_c():
         ("_LinkStats_C install", "meson install -C builddir"),
     ):
         with Popen(
-            cmd.split(),
-            cwd=LINKSTATS_C,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            cmd.split(), cwd=LINKSTATS_C, stdout=sys.stdout, stderr=sys.stderr,
         ) as proc:
             if proc.wait() != 0:
                 sys.exit("Error during " + name)
