@@ -37,7 +37,7 @@ jobs:
           export toolchain=gxx_linux-64
         fi
         
-        mamba create -q -n test-environment -c conda-forge -c bioconda -y meson clang $toolchain click pandas numpy seaborn matplotlib tqdm htslib
+        mamba create -q -n test-environment -c conda-forge -c bioconda -y meson clang $toolchain click pandas numpy seaborn matplotlib tqdm htslib pkg-config
        
     - name: compile_install
       run: |
