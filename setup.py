@@ -81,7 +81,7 @@ def main():
         include_package_data=True,
         author="Ed Harry",
         author_email="edward.harry@sanger.ac.uk",
-        python_requires=">=3.8.10",
+        python_requires=">=3.8.0",
         install_requires=(
             "click>=8.0.1",
             "pandas>=1.2.5",
