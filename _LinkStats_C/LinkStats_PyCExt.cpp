@@ -20,10 +20,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include <LinkStats.hpp>
+
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-
-#include <LinkStats.hpp>
 
 #include <unistd.h>
 
