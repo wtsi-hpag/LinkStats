@@ -8,7 +8,7 @@ LinkStats --help
 
 # Requirments, Running
 * Linux
-* [htslib](https://www.htslib.org/) >=1.14
+* [htslib](https://www.htslib.org/) >=1.12
 * [python](https://www.python.org/) >=3.8
     * [click](https://click.palletsprojects.com/en/8.0.x/) >=8.0.1
     * [pandas](https://pandas.pydata.org/) >=1.2.5
@@ -16,7 +16,6 @@ LinkStats --help
     * [seaborn](https://seaborn.pydata.org/) >=0.11.1
     * [matplotlib](https://matplotlib.org/stable/index.html) >=3.4.2
     * [tqdm](https://tqdm.github.io/) >=4.61.1
-    * [networkx](https://networkx.org/) >=2.6.3
 
 # Requirments, Installing
 * [meson](https://mesonbuild.com/)
