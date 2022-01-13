@@ -48,7 +48,7 @@ endif
 
 
 deps = [  dependency('threads'),
-          dependency('htslib', version : '>= 1.14')]
+          dependency('htslib', version : '>= 1.12')]
 cpp_dep = meson.get_compiler('cpp').find_library('stdc++', required : true)
 
 
