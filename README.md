@@ -1,5 +1,14 @@
+[![test](https://github.com/wtsi-hpag/LinkStats/actions/workflows/test.yml/badge.svg)](https://github.com/wtsi-hpag/LinkStats/actions/workflows/test.yml)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/linkstats/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/linkstats/badges/downloads.svg)](https://anaconda.org/bioconda/linkstats)
 # LinkStats
 Collect and process statistics from aligned linked-reads.
+
+# Bioconda
+LinkStats is available on [bioconda](https://bioconda.github.io/).<br/>
+```sh
+> conda install linkstats
+```
 
 # Usage
 ```bash
@@ -7,7 +16,6 @@ LinkStats --help
 ```
 
 # Requirments, Running
-* Linux
 * [htslib](https://www.htslib.org/) >=1.12
 * [python](https://www.python.org/) >=3.8
     * [click](https://click.palletsprojects.com/en/8.0.x/) >=8.0.1
